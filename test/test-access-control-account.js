@@ -5,7 +5,7 @@ const hre = require("hardhat");
 
 const { ethers } = hre;
 const { MaxUint256, ZeroAddress } = hre.ethers;
-const { getUserOpHash, packUserOp, packedUserOpAsArray } = require("./UserOp.js");
+const { getUserOpHash, packUserOp, packedUserOpAsArray } = require("../js/userOp.js");
 
 const _A = amountFunction(6);
 const ADDRESSES = {

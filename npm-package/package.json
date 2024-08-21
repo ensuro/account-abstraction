@@ -1,0 +1,30 @@
+{
+  "name": "@ensuro/account-abstraction",
+  "description": "ERC-4337 related contracts by the Ensuro Team",
+  "version": "%%VERSION%%",
+  "files": [
+    "**/*.sol",
+    "/build",
+    "/js/*.js"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:ensuro/account-abstraction.git"
+  },
+  "keywords": [
+    "solidity",
+    "ethereum",
+    "smart",
+    "contracts",
+    "decentralized",
+    "insurance",
+    "ensuro",
+    "erc4337"
+  ],
+  "author": "Ensuro <guillermo@ensuro.co>",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/ensuro/account-abstraction/issues"
+  },
+  "homepage": "https://github.com/ensuro/account-abstraction#readme"
+}
