@@ -15,7 +15,6 @@ const ADDRESSES = {
 };
 
 async function setUp() {
-  await setupChain(null);
   const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
 
   const usdc = await initForkCurrency(ADDRESSES.USDC, ADDRESSES.USDCWhale, [exec1, exec2], [_A(100), _A(100)]);
@@ -43,6 +42,10 @@ async function setUp() {
 }
 
 describe("AccessControlAccount contract tests", function () {
+  before(async () => {
+    await setupChain(null);
+  });
+
   it("Constructs with the right permissions and EP", async () => {
     const { acAcc, anon, exec1, exec2, admin, roles } = await setUp();
     expect(await acAcc.hasRole(roles.admin, admin)).to.equal(true);
@@ -114,7 +117,7 @@ describe("AccessControlAccount contract tests", function () {
     expect(await usdc.balanceOf(acAcc)).to.equal(_A(15));
   });
 
-  it.only("Can executeBatch when called directly (with value)", async () => {
+  it("Can executeBatch when called directly (with value)", async () => {
     const { acAcc, anon, exec1, exec2, ep } = await setUp();
 
     // Setup - send some eth to acAcc and deposit
@@ -126,6 +129,7 @@ describe("AccessControlAccount contract tests", function () {
       ep.interface.encodeFunctionData("depositTo", [getAddress(exec2)]),
       ep.interface.encodeFunctionData("addStake", [3600]),
     ];
+    await expect(acAcc.connect(exec1).executeBatch([ep, ep], [], calls)).to.be.revertedWith("no stake specified");
     await expect(acAcc.connect(exec1).executeBatch([ep, ep], [_W(1)], calls)).to.be.revertedWithCustomError(
       acAcc,
       "WrongArrayLength"
