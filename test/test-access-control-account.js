@@ -4,7 +4,8 @@ const { setupChain, initForkCurrency } = require("@ensuro/core/js/test-utils");
 const hre = require("hardhat");
 
 const { ethers } = hre;
-const { MaxUint256 } = hre.ethers;
+const { MaxUint256, ZeroAddress } = hre.ethers;
+const { getUserOpHash, packUserOp, packedUserOpAsArray } = require("./UserOp.js");
 
 const _A = amountFunction(6);
 const ADDRESSES = {
@@ -13,6 +14,10 @@ const ADDRESSES = {
   USDCWhale: "0x4d97dcd97ec945f40cf65f87097ace5ea0476045",
   ENTRYPOINT: "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
 };
+
+function packAccountGasLimits(verificationGasLimit, callGasLimit) {
+  return ethers.toBeHex(verificationGasLimit, 16) + ethers.toBeHex(callGasLimit, 16).slice(2);
+}
 
 async function setUp() {
   const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
@@ -94,6 +99,61 @@ describe("AccessControlAccount contract tests", function () {
     expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
   });
 
+  it("Can execute when called through entryPoint", async () => {
+    const { acAcc, anon, exec1, usdc, ep } = await setUp();
+    const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
+    const executeCall = acAcc.interface.encodeFunctionData("execute", [getAddress(usdc), 0, approveExec1]);
+
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
+
+    // Construct the userOp manually
+    const nonce = await acAcc.getNonce();
+    const userOp = [
+      getAddress(acAcc),
+      nonce,
+      ethers.toUtf8Bytes(""),
+      executeCall,
+      packAccountGasLimits(999999, 999999),
+      999999,
+      packAccountGasLimits(1e9, 1e9),
+      ethers.toUtf8Bytes(""),
+    ];
+    const userOpHash = await ep.getUserOpHash([...userOp, ethers.toUtf8Bytes("")]);
+
+    // Same but using UserOp object and compare userOpHash
+    const userOpObj = {
+      sender: getAddress(acAcc),
+      nonce: nonce,
+      initCode: "0x",
+      callData: executeCall,
+      callGasLimit: 999999,
+      verificationGasLimit: 999999,
+      preVerificationGas: 999999,
+      maxFeePerGas: 1e9,
+      maxPriorityFeePerGas: 1e9,
+      paymaster: ZeroAddress,
+      paymasterData: "0x",
+      paymasterVerificationGasLimit: 0,
+      paymasterPostOpGasLimit: 0,
+      signature: "0x",
+    };
+    const { chainId } = await hre.ethers.provider.getNetwork();
+    expect(getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId)).to.equal(userOpHash);
+
+    // Sign the hash
+    const message = userOpHash;
+    const anonSignature = await anon.signMessage(ethers.getBytes(message));
+    const signature = await exec1.signMessage(ethers.getBytes(message));
+    await expect(ep.handleOps([[...userOp, anonSignature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOp")
+      .withArgs(0, "AA24 signature error");
+
+    expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
+    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
+    expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
+  });
+
   it("Can executeBatch when called directly", async () => {
     const { acAcc, anon, exec1, exec2, usdc } = await setUp();
 
@@ -145,5 +205,63 @@ describe("AccessControlAccount contract tests", function () {
     expect(await ep.balanceOf(acAcc)).to.equal(_W(5));
     expect(await ep.balanceOf(exec2)).to.equal(_W(1)); // The deposit was made on behalft of exec2
     expect((await ep.getDepositInfo(acAcc)).stake).to.equal(_W(2));
+  });
+
+  it("Can executeBatch when called through entryPoint", async () => {
+    const { acAcc, anon, exec1, exec2, usdc, ep } = await setUp();
+    // Setup - send some initial money
+    await usdc.connect(exec1).transfer(acAcc, _A(10));
+    await usdc.connect(exec2).transfer(acAcc, _A(20));
+    expect(await usdc.balanceOf(acAcc)).to.equal(_A(30));
+
+    const calls = [
+      usdc.interface.encodeFunctionData("transfer", [getAddress(exec1), _A(5)]),
+      usdc.interface.encodeFunctionData("transfer", [getAddress(exec2), _A(10)]),
+    ];
+    const executeBatchCall = acAcc.interface.encodeFunctionData("executeBatch", [
+      [getAddress(usdc), getAddress(usdc)],
+      [],
+      calls,
+    ]);
+
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
+
+    const nonce = await acAcc.getNonce();
+    const userOpObj = {
+      sender: getAddress(acAcc),
+      nonce: nonce,
+      initCode: "0x",
+      callData: executeBatchCall,
+      callGasLimit: 999999,
+      verificationGasLimit: 999999,
+      preVerificationGas: 999999,
+      maxFeePerGas: 1e9,
+      maxPriorityFeePerGas: 1e9,
+      paymaster: ZeroAddress,
+      paymasterData: "0x",
+      paymasterVerificationGasLimit: 0,
+      paymasterPostOpGasLimit: 0,
+      signature: "0x",
+    };
+    const { chainId } = await hre.ethers.provider.getNetwork();
+    const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
+
+    const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
+    // Sign the hash
+    const message = userOpHash;
+    const anonSignature = await anon.signMessage(ethers.getBytes(message));
+    const signature = await exec1.signMessage(ethers.getBytes(message));
+    await expect(ep.handleOps([[...userOp, anonSignature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOp")
+      .withArgs(0, "AA24 signature error");
+
+    expect(await usdc.balanceOf(acAcc)).to.equal(_A(30));
+    await expect(() => ep.handleOps([[...userOp, signature]], anon)).to.changeTokenBalances(
+      usdc,
+      [exec1, exec2],
+      [_A(5), _A(10)]
+    );
+    expect(await usdc.balanceOf(acAcc)).to.equal(_A(15));
   });
 });
