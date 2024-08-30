@@ -2,10 +2,11 @@ const { expect } = require("chai");
 const { _W, getRole, amountFunction, getAddress } = require("@ensuro/core/js/utils");
 const { setupChain, initForkCurrency } = require("@ensuro/core/js/test-utils");
 const hre = require("hardhat");
+const helpers = require("@nomicfoundation/hardhat-network-helpers");
 
 const { ethers } = hre;
 const { MaxUint256, ZeroAddress } = hre.ethers;
-const { getUserOpHash, packUserOp, packedUserOpAsArray } = require("../js/userOp.js");
+const { getUserOpHash, packUserOp, packedUserOpAsArray, packAccountGasLimits } = require("../js/userOp.js");
 
 const _A = amountFunction(6);
 const ADDRESSES = {
@@ -14,10 +15,6 @@ const ADDRESSES = {
   USDCWhale: "0x4d97dcd97ec945f40cf65f87097ace5ea0476045",
   ENTRYPOINT: "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
 };
-
-function packAccountGasLimits(verificationGasLimit, callGasLimit) {
-  return ethers.toBeHex(verificationGasLimit, 16) + ethers.toBeHex(callGasLimit, 16).slice(2);
-}
 
 async function setUp() {
   const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
@@ -52,7 +49,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Constructs with the right permissions and EP", async () => {
-    const { acAcc, anon, exec1, exec2, admin, roles } = await setUp();
+    const { acAcc, anon, exec1, exec2, admin, roles } = await helpers.loadFixture(setUp);
     expect(await acAcc.hasRole(roles.admin, admin)).to.equal(true);
     expect(await acAcc.hasRole(roles.admin, anon)).to.equal(false);
     expect(await acAcc.hasRole(roles.exec, exec1)).to.equal(true);
@@ -62,7 +59,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Can receive eth, deposits and only WITHDRAW_ROLE can withdraw", async () => {
-    const { acAcc, anon, withdraw, admin, roles, ep } = await setUp();
+    const { acAcc, anon, withdraw, admin, roles, ep } = await helpers.loadFixture(setUp);
     expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(0);
     await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(acAcc, _W(1));
     expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(_W(1));
@@ -89,7 +86,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Can execute when called directly", async () => {
-    const { acAcc, anon, exec1, usdc } = await setUp();
+    const { acAcc, anon, exec1, usdc } = await helpers.loadFixture(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     await expect(acAcc.connect(anon).execute(usdc, 0, approveExec1))
       .to.be.revertedWithCustomError(acAcc, "RequiredEntryPointOrExecutor")
@@ -100,7 +97,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Can execute when called through entryPoint", async () => {
-    const { acAcc, anon, exec1, usdc, ep } = await setUp();
+    const { acAcc, anon, exec1, usdc, ep } = await helpers.loadFixture(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     const executeCall = acAcc.interface.encodeFunctionData("execute", [getAddress(usdc), 0, approveExec1]);
 
@@ -155,7 +152,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Can executeBatch when called directly", async () => {
-    const { acAcc, anon, exec1, exec2, usdc } = await setUp();
+    const { acAcc, anon, exec1, exec2, usdc } = await helpers.loadFixture(setUp);
 
     // Setup - send some initial money
     await usdc.connect(exec1).transfer(acAcc, _A(10));
@@ -178,7 +175,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Can executeBatch when called directly (with value)", async () => {
-    const { acAcc, anon, exec1, exec2, ep } = await setUp();
+    const { acAcc, exec1, exec2, ep } = await helpers.loadFixture(setUp);
 
     // Setup - send some eth to acAcc and deposit
     await expect(() => acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ep, _W(5));
@@ -208,7 +205,7 @@ describe("AccessControlAccount contract tests", function () {
   });
 
   it("Can executeBatch when called through entryPoint", async () => {
-    const { acAcc, anon, exec1, exec2, usdc, ep } = await setUp();
+    const { acAcc, anon, exec1, exec2, usdc, ep } = await helpers.loadFixture(setUp);
     // Setup - send some initial money
     await usdc.connect(exec1).transfer(acAcc, _A(10));
     await usdc.connect(exec2).transfer(acAcc, _A(20));
