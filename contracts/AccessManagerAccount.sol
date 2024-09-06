@@ -9,7 +9,6 @@ import {IEntryPoint} from "@account-abstraction/contracts/interfaces/IEntryPoint
 import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {BytesLib} from "solidity-bytes-utils/contracts/BytesLib.sol";
-import "hardhat/console.sol";
 
 contract AccessManagerAccount is AccessManager, BaseAccount {
   using BytesLib for bytes;
