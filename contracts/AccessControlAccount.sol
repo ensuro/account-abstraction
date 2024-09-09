@@ -2,6 +2,7 @@
 pragma solidity ^0.8.23;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {BaseAccount} from "@account-abstraction/contracts/core/BaseAccount.sol";
 import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "@account-abstraction/contracts/core/Helpers.sol";
@@ -48,7 +49,7 @@ contract AccessControlAccount is AccessControl, BaseAccount {
    */
   function execute(address dest, uint256 value, bytes calldata func) external {
     _requireFromEntryPointOrExecutor();
-    _call(dest, value, func);
+    Address.functionCallWithValue(dest, func, value);
   }
 
   /**
@@ -63,11 +64,11 @@ contract AccessControlAccount is AccessControl, BaseAccount {
     if (dest.length != func.length || (value.length != 0 && value.length != func.length)) revert WrongArrayLength();
     if (value.length == 0) {
       for (uint256 i = 0; i < dest.length; i++) {
-        _call(dest[i], 0, func[i]);
+        Address.functionCallWithValue(dest[i], func[i], 0);
       }
     } else {
       for (uint256 i = 0; i < dest.length; i++) {
-        _call(dest[i], value[i], func[i]);
+        Address.functionCallWithValue(dest[i], func[i], value[i]);
       }
     }
   }
@@ -81,16 +82,6 @@ contract AccessControlAccount is AccessControl, BaseAccount {
     address recovered = ECDSA.recover(hash, userOp.signature);
     if (!hasRole(EXECUTOR_ROLE, recovered)) return SIG_VALIDATION_FAILED;
     return SIG_VALIDATION_SUCCESS;
-  }
-
-  function _call(address target, uint256 value, bytes memory data) internal {
-    (bool success, bytes memory result) = target.call{value: value}(data);
-    if (!success) {
-      // solhint-disable-next-line no-inline-assembly
-      assembly {
-        revert(add(result, 32), mload(result))
-      }
-    }
   }
 
   /**

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.23;
 
 import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {BaseAccount} from "@account-abstraction/contracts/core/BaseAccount.sol";
 import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "@account-abstraction/contracts/core/Helpers.sol";
@@ -19,6 +20,7 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
 
   error OnlyExecuteAllowedFromEntryPoint(bytes4 receivedSelector);
   error OnlyExternalTargets();
+  error DelayNotAllowed();
 
   /// @inheritdoc BaseAccount
   function entryPoint() public view virtual override returns (IEntryPoint) {
@@ -40,11 +42,11 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
    */
   function execute(address dest, uint256 value, bytes calldata func) external {
     _requireFromEntryPoint();
-    _call(dest, value, func);
+    Address.functionCallWithValue(dest, func, value);
   }
 
   // hashOperation variant that receives bytes memory
-  function _hashOperation(address caller, address target, bytes memory data) internal view returns (bytes32) {
+  function _hashOperation(address caller, address target, bytes memory data) internal pure returns (bytes32) {
     return keccak256(abi.encode(caller, target, data));
   }
 
@@ -78,16 +80,6 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
     return _checkAAExecuteCall(recovered, userOp.callData);
   }
 
-  function _call(address target, uint256 value, bytes memory data) internal {
-    (bool success, bytes memory result) = target.call{value: value}(data);
-    if (!success) {
-      // solhint-disable-next-line no-inline-assembly
-      assembly {
-        revert(add(result, 32), mload(result))
-      }
-    }
-  }
-
   /**
    * check current account deposit in the entryPoint
    */
@@ -110,7 +102,10 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
     (bool immediate, uint32 delay) = canCall(caller, address(this), bytes4(data[0:4]));
     if (!immediate) {
       if (delay > 0) {
-        _consumeScheduledOp(hashOperation(caller, address(this), data));
+        revert DelayNotAllowed();
+        // Is not possible to handle scheduled operations, because when target=address(this), schedule 
+        // doesn't work the same way, otherwise here we should do just
+        // _consumeScheduledOp(hashOperation(caller, address(this), data));
       } else {
         if (fail)
           revert AccessManagerUnauthorizedAccount(caller, getTargetFunctionRole(address(this), bytes4(data[0:4])));

@@ -3,6 +3,7 @@ const { _W, getRole, amountFunction, getAddress } = require("@ensuro/core/js/uti
 const { setupChain, initForkCurrency } = require("@ensuro/core/js/test-utils");
 const hre = require("hardhat");
 const helpers = require("@nomicfoundation/hardhat-network-helpers");
+const withArgs = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
 const { ethers } = hre;
 const { MaxUint256, ZeroAddress } = hre.ethers;
@@ -112,6 +113,53 @@ describe("AccessControlAccount contract tests", function () {
     expect(await acAcc.getDeposit()).to.equal(_W("1.5"));
   });
 
+  it("Can receive eth, deposits and only WITHDRAW_ROLE can withdraw - delay variant", async () => {
+    const { acAcc, anon, withdraw, admin, roles, ep } = await helpers.loadFixture(setUp);
+    expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(0);
+    await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(acAcc, _W(1));
+    expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(_W(1));
+
+    await expect(() => acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ep, _W(2));
+    expect(await ep.balanceOf(acAcc)).to.equal(_W(2));
+
+    await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W(1)))
+      .to.be.revertedWithCustomError(acAcc, "AccessManagerUnauthorizedAccount")
+      .withArgs(withdraw, roles.withdraw);
+
+    await expect(acAcc.connect(anon).grantRole(roles.withdraw, withdraw, 0))
+      .to.be.revertedWithCustomError(acAcc, "AccessManagerUnauthorizedAccount")
+      .withArgs(anon, roles.admin);
+
+    await expect(acAcc.connect(admin).grantRole(roles.withdraw, withdraw, 600)).not.to.be.reverted;
+    expect(await acAcc.hasRole(roles.withdraw, withdraw)).to.deep.equal([true, 600]);
+
+    await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W(1))).to.be.revertedWithCustomError(
+      acAcc,
+      "DelayNotAllowed"
+    );
+
+    // Leaving the rest of the test disabled because schedule doesn't work for withdrawDepositTo.
+    // The reason is https://github.com/OpenZeppelin/openzeppelin-contracts/blob/c01a0fa27fb2d1546958be5d2cbbdd3fb565e4fa/contracts/access/manager/AccessManager.sol#L619
+    // doesn't allow schedule of non-AccessManager methods, and checks differently the permissions when the target
+    // is address(this)
+
+    // const now = await helpers.time.latest();
+
+    // const withdrawCall = acAcc.interface.encodeFunctionData("withdrawDepositTo", [getAddress(anon), _W("0.5")]);
+    // const operationId = await acAcc.hashOperation(withdraw, acAcc, withdrawCall);
+
+    // await expect(await acAcc.connect(withdraw).schedule(acAcc, withdrawCall, now + 1000))
+    //   .to.emit(acAcc, "OperationScheduled")
+    //   .withArgs(operationId, 0, now + 1000, withdraw, acAcc, withdrawCall);
+
+    // await expect(() => acAcc.connect(withdraw).withdrawDepositTo(anon, _W("0.5"))).to.changeEtherBalance(
+    //   anon,
+    //   _W("0.5")
+    // );
+    // expect(await ep.balanceOf(acAcc)).to.equal(_W("1.5"));
+    // expect(await acAcc.getDeposit()).to.equal(_W("1.5"));
+  });
+
   it("Can execute when called through entryPoint", async () => {
     const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
@@ -172,6 +220,74 @@ describe("AccessControlAccount contract tests", function () {
       .withArgs(0, "AA24 signature error");
 
     await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.be.reverted;
+
+    expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
+    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
+    expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
+  });
+
+  it("Can execute when called through entryPoint - Delay on USDC.approve variant", async () => {
+    const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
+    const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
+      getAddress(usdc),
+      0,
+      approveExec1,
+    ]);
+
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
+
+    const nonce = await acAcc.getNonce();
+    const userOpObj = {
+      sender: getAddress(acAcc),
+      nonce: nonce,
+      initCode: "0x",
+      callData: executeCall,
+      callGasLimit: 999999,
+      verificationGasLimit: 999999,
+      preVerificationGas: 999999,
+      maxFeePerGas: 1e9,
+      maxPriorityFeePerGas: 1e9,
+      paymaster: ZeroAddress,
+      paymasterData: "0x",
+      paymasterVerificationGasLimit: 0,
+      paymasterPostOpGasLimit: 0,
+      signature: "0x",
+    };
+    const { chainId } = await hre.ethers.provider.getNetwork();
+    const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
+    const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
+
+    // Sign the hash
+    const message = userOpHash;
+    const anonSignature = await anon.signMessage(ethers.getBytes(message));
+    const signature = await exec1.signMessage(ethers.getBytes(message));
+    await expect(ep.handleOps([[...userOp, anonSignature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOp")
+      .withArgs(0, "AA24 signature error");
+
+    // Require 600 seconds delay for execute
+    await acAcc.connect(admin).grantRole(roles.exec, exec1, 0);
+    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 600)).not.to.be.reverted;
+    // With the correct signature fails because the operation is not scheduled
+    await expect(ep.handleOps([[...userOp, signature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
+      .withArgs(0, "AA23 reverted", withArgs.anyValue);
+
+    const now = await helpers.time.latest();
+    const operationId = await acAcc.hashOperation(exec1, usdc, approveExec1);
+
+    await expect(await acAcc.connect(exec1).schedule(usdc, approveExec1, now + 1000))
+      .to.emit(acAcc, "OperationScheduled")
+      .withArgs(operationId, 1, now + 1000, exec1, usdc, approveExec1);
+
+    // Keeps failing because time not increased
+    await expect(ep.handleOps([[...userOp, signature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
+      .withArgs(0, "AA23 reverted", withArgs.anyValue);
+
+    await helpers.time.increase(1100);
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
     await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
