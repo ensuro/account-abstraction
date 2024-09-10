@@ -375,13 +375,13 @@ describe("AccessControlAccount contract tests", function () {
     const signature = await exec1.signMessage(ethers.getBytes(message));
     await expect(ep.handleOps([[...userOp, anonSignature]], anon))
       .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
-      .withArgs(0, "AA23 reverted", "0xfcd888ca");
+      .withArgs(0, "AA23 reverted", acAcc.interface.getError("OnlyExternalTargets").selector);
     // 0xfcd888ca == first 4 bytes keccak("OnlyExternalTargets()")
 
     await acAcc.connect(admin).grantRole(roles.exec, exec1, 0);
     // With the correct signature fails anyway, because the error is independent of the signature
     await expect(ep.handleOps([[...userOp, signature]], anon))
       .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
-      .withArgs(0, "AA23 reverted", "0xfcd888ca");
+      .withArgs(0, "AA23 reverted", acAcc.interface.getError("OnlyExternalTargets").selector);
   });
 });
