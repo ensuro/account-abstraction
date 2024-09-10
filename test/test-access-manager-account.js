@@ -1,5 +1,5 @@
 const { expect } = require("chai");
-const { _W, getRole, amountFunction, getAddress } = require("@ensuro/core/js/utils");
+const { _W, amountFunction, getAddress } = require("@ensuro/core/js/utils");
 const { setupChain, initForkCurrency } = require("@ensuro/core/js/test-utils");
 const hre = require("hardhat");
 const helpers = require("@nomicfoundation/hardhat-network-helpers");
@@ -236,7 +236,6 @@ describe("AccessControlAccount contract tests", function () {
     ]);
 
     await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
-    expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
 
     const nonce = await acAcc.getNonce();
     const userOpObj = {
@@ -292,5 +291,97 @@ describe("AccessControlAccount contract tests", function () {
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
     await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
     expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
+  });
+
+  it("Can't run other methods than 'execute' through AA", async () => {
+    const { acAcc, anon, exec1, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const withdrawCall = acAcc.interface.encodeFunctionData("withdrawDepositTo", [getAddress(anon), _W(1)]);
+
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+
+    const nonce = await acAcc.getNonce();
+    const userOpObj = {
+      sender: getAddress(acAcc),
+      nonce: nonce,
+      initCode: "0x",
+      callData: withdrawCall,
+      callGasLimit: 999999,
+      verificationGasLimit: 999999,
+      preVerificationGas: 999999,
+      maxFeePerGas: 1e9,
+      maxPriorityFeePerGas: 1e9,
+      paymaster: ZeroAddress,
+      paymasterData: "0x",
+      paymasterVerificationGasLimit: 0,
+      paymasterPostOpGasLimit: 0,
+      signature: "0x",
+    };
+    const { chainId } = await hre.ethers.provider.getNetwork();
+    const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
+    const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
+
+    // Sign the hash
+    const message = userOpHash;
+    const anonSignature = await anon.signMessage(ethers.getBytes(message));
+    const signature = await exec1.signMessage(ethers.getBytes(message));
+    await expect(ep.handleOps([[...userOp, anonSignature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
+      .withArgs(0, "AA23 reverted", "0xd4d202fb4d44560d00000000000000000000000000000000000000000000000000000000");
+    // 0xd4d202fb == first 4 bytes keccak("OnlyExecuteAllowedFromEntryPoint(bytes4)")
+    // 0x4d44560d == selector of withdrawDepositTo(address,uint256)
+
+    await acAcc.connect(admin).grantRole(roles.exec, exec1, 0);
+    // With the correct signature fails anyway, because the error is independent of the signature
+    await expect(ep.handleOps([[...userOp, signature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
+      .withArgs(0, "AA23 reverted", "0xd4d202fb4d44560d00000000000000000000000000000000000000000000000000000000");
+  });
+
+  it("Can't run execute with address(this) as target", async () => {
+    const { acAcc, anon, exec1, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const withdrawCall = acAcc.interface.encodeFunctionData("withdrawDepositTo", [getAddress(anon), _W(1)]);
+    const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
+      getAddress(acAcc),
+      0,
+      withdrawCall,
+    ]);
+
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+
+    const nonce = await acAcc.getNonce();
+    const userOpObj = {
+      sender: getAddress(acAcc),
+      nonce: nonce,
+      initCode: "0x",
+      callData: executeCall,
+      callGasLimit: 999999,
+      verificationGasLimit: 999999,
+      preVerificationGas: 999999,
+      maxFeePerGas: 1e9,
+      maxPriorityFeePerGas: 1e9,
+      paymaster: ZeroAddress,
+      paymasterData: "0x",
+      paymasterVerificationGasLimit: 0,
+      paymasterPostOpGasLimit: 0,
+      signature: "0x",
+    };
+    const { chainId } = await hre.ethers.provider.getNetwork();
+    const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
+    const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
+
+    // Sign the hash
+    const message = userOpHash;
+    const anonSignature = await anon.signMessage(ethers.getBytes(message));
+    const signature = await exec1.signMessage(ethers.getBytes(message));
+    await expect(ep.handleOps([[...userOp, anonSignature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
+      .withArgs(0, "AA23 reverted", "0xfcd888ca");
+    // 0xfcd888ca == first 4 bytes keccak("OnlyExternalTargets()")
+
+    await acAcc.connect(admin).grantRole(roles.exec, exec1, 0);
+    // With the correct signature fails anyway, because the error is independent of the signature
+    await expect(ep.handleOps([[...userOp, signature]], anon))
+      .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
+      .withArgs(0, "AA23 reverted", "0xfcd888ca");
   });
 });

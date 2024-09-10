@@ -55,9 +55,6 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
       userOpCallData[4:userOpCallData.length - 4],
       (address, uint256, bytes)
     );
-    // Calls to address(this) are not allowed through AA. It might be possible to implement, but this
-    // complicates the testing and it might introduce security issues
-    if (target == address(this)) revert OnlyExternalTargets();
     (bool immediate, uint32 delay) = canCall(signer, target, bytes4(funcCall.toBytes32(0)));
     if (immediate || delay == 0) return immediate ? SIG_VALIDATION_SUCCESS : SIG_VALIDATION_FAILED;
     _consumeScheduledOp(_hashOperation(signer, target, funcCall));
@@ -72,6 +69,10 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
     // First check the initial selector, from EntryPoint only execute and executeBatch are allowed
     bytes4 selector = bytes4(userOp.callData[0:4]);
     if (selector != EXECUTE_SELECTOR) revert OnlyExecuteAllowedFromEntryPoint(selector);
+    address target = abi.decode(userOp.callData[4:36], (address));
+    // Calls to address(this) are not allowed through AA. It might be possible to implement, but this
+    // complicates the testing and it might introduce security issues
+    if (target == address(this)) revert OnlyExternalTargets();
     bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
     address recovered = ECDSA.recover(hash, userOp.signature);
     // Check first the signer can call execute
