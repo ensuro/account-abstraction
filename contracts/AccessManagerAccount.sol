@@ -103,7 +103,7 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
     if (!immediate) {
       if (delay > 0) {
         revert DelayNotAllowed();
-        // Is not possible to handle scheduled operations, because when target=address(this), schedule 
+        // Is not possible to handle scheduled operations, because when target=address(this), schedule
         // doesn't work the same way, otherwise here we should do just
         // _consumeScheduledOp(hashOperation(caller, address(this), data));
       } else {
