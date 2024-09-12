@@ -99,7 +99,7 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
    * @dev Adapted from AccessManaged._checkCanCall, checks a method can be called as if the AccessManagerAccount
    *      was an access managed contract (not validating against admin permissions)
    */
-  function _checkCanCall(address caller, bytes calldata data, bool fail) internal returns (bool) {
+  function _checkCanCall(address caller, bytes calldata data, bool fail) internal view returns (bool) {
     (bool immediate, uint32 delay) = canCall(caller, address(this), bytes4(data[0:4]));
     if (!immediate) {
       if (delay > 0) {
