@@ -124,4 +124,16 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
     _checkCanCall(_msgSender(), _msgData(), true);
     entryPoint().withdrawTo(withdrawAddress, amount);
   }
+
+  function hasRole(
+    uint64 roleId,
+    address account
+  ) public view virtual override returns (bool isMember, uint32 executionDelay) {
+    if (roleId == PUBLIC_ROLE) {
+      return (true, 0);
+    } else {
+      (uint48 hasRoleSince, uint32 currentDelay, , ) = getAccess(roleId, account);
+      return (hasRoleSince != 0, currentDelay);
+    }
+  }
 }
