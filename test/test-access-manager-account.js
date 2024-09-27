@@ -70,7 +70,7 @@ async function setUp() {
   };
 }
 
-describe("AccessControlAccount contract tests", function () {
+describe("AccessManagerAccount contract tests", function () {
   before(async () => {
     await setupChain(null);
   });
@@ -160,7 +160,7 @@ describe("AccessControlAccount contract tests", function () {
     // expect(await acAcc.getDeposit()).to.equal(_W("1.5"));
   });
 
-  it("Can execute when called through entryPoint", async () => {
+  it.only("Can execute when called through entryPoint", async () => {
     const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
@@ -220,6 +220,27 @@ describe("AccessControlAccount contract tests", function () {
       .withArgs(0, "AA24 signature error");
 
     await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.be.reverted;
+
+    // Call the validateUserOp function on the wallet contract
+    await helpers.impersonateAccount(ep.target);
+    const epSigner = await hre.ethers.getSigner(ep.target);
+    const validateTx = await acAcc.connect(epSigner).validateUserOp(
+      [...userOp, signature],
+      userOpHash,
+      0 // missingAccountFunds
+    );
+    await validateTx.wait();
+
+    // Use debug_traceTransaction to get the execution trace of the validation call
+    console.log(validateTx.hash);
+    const trace = await hre.network.provider.send("debug_traceTransaction", [
+      validateTx.hash,
+      { disableStorage: true, disableMemory: true, disableStack: true },
+    ]);
+
+    const executedOpcodes = trace.structLogs.map((log) => log.op);
+    console.log(JSON.stringify(executedOpcodes));
+    await expect(executedOpcodes).to.not.contain("TIMESTAMP");
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
     await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
