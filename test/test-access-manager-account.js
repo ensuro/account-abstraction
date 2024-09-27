@@ -160,7 +160,7 @@ describe("AccessManagerAccount contract tests", function () {
     // expect(await acAcc.getDeposit()).to.equal(_W("1.5"));
   });
 
-  it.only("Can execute when called through entryPoint", async () => {
+  it("Can execute when called through entryPoint", async () => {
     const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
