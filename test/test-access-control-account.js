@@ -146,6 +146,27 @@ describe("AccessControlAccount contract tests", function () {
       .to.be.revertedWithCustomError(ep, "FailedOp")
       .withArgs(0, "AA24 signature error");
 
+    // Call the validateUserOp function on the wallet contract
+    await helpers.impersonateAccount(ep.target);
+    const epSigner = await hre.ethers.getSigner(ep.target);
+    const validateTx = await acAcc.connect(epSigner).validateUserOp(
+      [...userOp, signature],
+      userOpHash,
+      0 // missingAccountFunds
+    );
+    await validateTx.wait();
+
+    // Use debug_traceTransaction to get the execution trace of the validation call
+    console.log(validateTx.hash);
+    const trace = await hre.network.provider.send("debug_traceTransaction", [
+      validateTx.hash,
+      { disableStorage: true, disableMemory: true, disableStack: true },
+    ]);
+
+    const executedOpcodes = trace.structLogs.map((log) => log.op);
+    console.log(JSON.stringify(executedOpcodes));
+    await expect(executedOpcodes).to.not.contain("TIMESTAMP");
+
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
     await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
     expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
