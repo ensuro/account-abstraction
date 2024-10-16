@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.23;
 
-import {AccessManager} from "@openzeppelin/contracts/access/manager/AccessManager.sol";
+import {AccessManager} from "./dependencies/AccessManager.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {BaseAccount} from "@account-abstraction/contracts/core/BaseAccount.sol";
@@ -65,7 +65,7 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
   function _validateSignature(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
-  ) internal virtual override returns (uint256 validationData) {
+  ) internal virtual override frozenTime returns (uint256 validationData) {
     // First check the initial selector, from EntryPoint only execute and executeBatch are allowed
     bytes4 selector = bytes4(userOp.callData[0:4]);
     if (selector != EXECUTE_SELECTOR) revert OnlyExecuteAllowedFromEntryPoint(selector);
@@ -123,17 +123,5 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
   function withdrawDepositTo(address payable withdrawAddress, uint256 amount) public {
     _checkCanCall(_msgSender(), _msgData(), true);
     entryPoint().withdrawTo(withdrawAddress, amount);
-  }
-
-  function hasRole(
-    uint64 roleId,
-    address account
-  ) public view virtual override returns (bool isMember, uint32 executionDelay) {
-    if (roleId == PUBLIC_ROLE) {
-      return (true, 0);
-    } else {
-      (uint48 hasRoleSince, uint32 currentDelay, , ) = getAccess(roleId, account);
-      return (hasRoleSince != 0, currentDelay);
-    }
   }
 }
