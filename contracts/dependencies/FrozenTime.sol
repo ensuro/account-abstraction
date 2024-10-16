@@ -81,7 +81,7 @@ library FrozenTime {
      * @dev Get the current value plus the pending value and effect timepoint if there is a scheduled change. If the
      * effect timepoint is 0, then the pending value should not be considered.
      */
-    function getFull(Delay self) internal view returns (uint32, uint32, uint48) {
+    function getFull(Delay self) internal pure returns (uint32, uint32, uint48) {
         return _getFullAt(self, timestamp());
     }
 

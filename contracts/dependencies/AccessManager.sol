@@ -109,6 +109,8 @@ contract AccessManager is Context, Multicall, IAccessManager {
     // This should be transient storage when supported by the EVM.
     bytes32 private _executionId;
 
+    bool private _isFrozen;
+
     /**
      * @dev Check that the caller is authorized to perform the operation, following the restrictions encoded in
      * {_getAdminRestrictions}.
@@ -116,6 +118,12 @@ contract AccessManager is Context, Multicall, IAccessManager {
     modifier onlyAuthorized() {
         _checkAuthorized();
         _;
+    }
+
+    modifier frozenTime() {
+        _isFrozen = true;
+        _;
+        _isFrozen = false;
     }
 
     constructor(address initialAdmin) {
@@ -195,7 +203,11 @@ contract AccessManager is Context, Multicall, IAccessManager {
         Access storage access = _roles[roleId].members[account];
 
         since = access.since;
-        (currentDelay, pendingDelay, effect) = FrozenTime.getFull(FrozenTime.Delay.wrap(Time.Delay.unwrap(access.delay)));
+        if (_isFrozen) {
+            (currentDelay, pendingDelay, effect) = FrozenTime.getFull(FrozenTime.Delay.wrap(Time.Delay.unwrap(access.delay)));
+        } else {
+            (currentDelay, pendingDelay, effect) = access.delay.getFull();
+        }
 
         return (since, currentDelay, pendingDelay, effect);
     }
@@ -209,7 +221,7 @@ contract AccessManager is Context, Multicall, IAccessManager {
             return (true, 0);
         } else {
             (uint48 hasRoleSince, uint32 currentDelay, , ) = getAccess(roleId, account);
-            return (hasRoleSince != 0 && hasRoleSince <= FrozenTime.timestamp(), currentDelay);
+            return (hasRoleSince != 0 && (_isFrozen || hasRoleSince <= Time.timestamp()), currentDelay);
         }
     }
 

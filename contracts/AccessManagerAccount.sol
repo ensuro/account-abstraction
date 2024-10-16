@@ -65,7 +65,7 @@ contract AccessManagerAccount is AccessManager, BaseAccount {
   function _validateSignature(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
-  ) internal virtual override returns (uint256 validationData) {
+  ) internal virtual override frozenTime returns (uint256 validationData) {
     // First check the initial selector, from EntryPoint only execute and executeBatch are allowed
     bytes4 selector = bytes4(userOp.callData[0:4]);
     if (selector != EXECUTE_SELECTOR) revert OnlyExecuteAllowedFromEntryPoint(selector);
