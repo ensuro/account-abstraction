@@ -157,14 +157,12 @@ describe("AccessControlAccount contract tests", function () {
     await validateTx.wait();
 
     // Use debug_traceTransaction to get the execution trace of the validation call
-    console.log(validateTx.hash);
     const trace = await hre.network.provider.send("debug_traceTransaction", [
       validateTx.hash,
       { disableStorage: true, disableMemory: true, disableStack: true },
     ]);
 
     const executedOpcodes = trace.structLogs.map((log) => log.op);
-    console.log(JSON.stringify(executedOpcodes));
     await expect(executedOpcodes).to.not.contain("TIMESTAMP");
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);

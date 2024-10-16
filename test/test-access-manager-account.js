@@ -160,6 +160,62 @@ describe("AccessManagerAccount contract tests", function () {
     // expect(await acAcc.getDeposit()).to.equal(_W("1.5"));
   });
 
+  it("Doesn't use TIMESTAMP or other forbidden opcodes", async () => {
+    const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
+    const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
+      getAddress(usdc),
+      0,
+      approveExec1,
+    ]);
+
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
+
+    // Construct the userOp manually
+    const nonce = await acAcc.getNonce();
+    const userOp = [
+      getAddress(acAcc),
+      nonce,
+      ethers.toUtf8Bytes(""),
+      executeCall,
+      packAccountGasLimits(999999, 999999),
+      999999,
+      packAccountGasLimits(1e9, 1e9),
+      ethers.toUtf8Bytes(""),
+    ];
+    const userOpHash = await ep.getUserOpHash([...userOp, ethers.toUtf8Bytes("")]);
+
+    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.be.reverted;
+
+    // Sign the hash
+    const message = userOpHash;
+    const signature = await exec1.signMessage(ethers.getBytes(message));
+
+    // Call the validateUserOp function on the wallet contract
+    await helpers.impersonateAccount(ep.target);
+    const epSigner = await hre.ethers.getSigner(ep.target);
+    const validateTx = await acAcc.connect(epSigner).validateUserOp(
+      [...userOp, signature],
+      userOpHash,
+      0 // missingAccountFunds
+    );
+    await validateTx.wait();
+
+    // Use debug_traceTransaction to get the execution trace of the validation call
+    const trace = await hre.network.provider.send("debug_traceTransaction", [
+      validateTx.hash,
+      { disableStorage: true, disableMemory: true, disableStack: true },
+    ]);
+
+    const executedOpcodes = trace.structLogs.map((log) => log.op);
+    await expect(executedOpcodes).to.not.contain("TIMESTAMP");
+
+    expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
+    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
+    expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
+  });
+
   it("Can execute when called through entryPoint", async () => {
     const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
@@ -232,14 +288,12 @@ describe("AccessManagerAccount contract tests", function () {
     await validateTx.wait();
 
     // Use debug_traceTransaction to get the execution trace of the validation call
-    console.log(validateTx.hash);
     const trace = await hre.network.provider.send("debug_traceTransaction", [
       validateTx.hash,
       { disableStorage: true, disableMemory: true, disableStack: true },
     ]);
 
     const executedOpcodes = trace.structLogs.map((log) => log.op);
-    console.log(JSON.stringify(executedOpcodes));
     await expect(executedOpcodes).to.not.contain("TIMESTAMP");
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
