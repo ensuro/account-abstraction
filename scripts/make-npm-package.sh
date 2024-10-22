@@ -29,6 +29,7 @@ git archive --format tar HEAD README.md contracts/ js/ | tar xv -C $TARGET_DIR
 
 mkdir $TARGET_DIR/build
 cp -r artifacts/contracts $TARGET_DIR/build
+cp artifacts/build-info/*.json $TARGET_DIR/build/build-info.json
 
 find $TARGET_DIR -name "*.dbg.json" -delete
 sed "s/%%VERSION%%/$VERSION/" npm-package/package.json > "$TARGET_DIR/package.json"
