@@ -117,7 +117,7 @@ contract AccessManager is Context, Multicall, IAccessManager {
     // This should be transient storage when supported by the EVM.
     bytes32 private _executionId;
 
-    bool private _isFrozen;
+    bool transient _isFrozen;
 
     /**
      * @dev Check that the caller is authorized to perform the operation.
