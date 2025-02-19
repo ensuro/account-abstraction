@@ -88,7 +88,7 @@ library FrozenTime {
     /**
      * @dev Get the current value.
      */
-    function get(Delay self) internal view returns (uint32) {
+    function get(Delay self) internal pure returns (uint32) {
         (uint32 delay, , ) = self.getFull();
         return delay;
     }
@@ -102,7 +102,7 @@ library FrozenTime {
         Delay self,
         uint32 newValue,
         uint32 minSetback
-    ) internal view returns (Delay updatedDelay, uint48 effect) {
+    ) internal pure returns (Delay updatedDelay, uint48 effect) {
         uint32 value = self.get();
         uint32 setback = uint32(Math.max(minSetback, value > newValue ? value - newValue : 0));
         effect = timestamp() + setback;

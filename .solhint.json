@@ -10,6 +10,7 @@
     "func-visibility": ["warn", { "ignoreConstructors": true }],
     "not-rely-on-time": "off",
     "max-states-count": "off",
+    "gas-custom-errors": "error",
     "immutable-vars-naming": "off"
   },
   "plugins": ["prettier"]
