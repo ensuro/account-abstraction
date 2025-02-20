@@ -1,6 +1,5 @@
 module.exports = {
   env: {
-    es2020: true,
     commonjs: true,
     es6: true,
     node: true,

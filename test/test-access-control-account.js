@@ -1,6 +1,6 @@
 const { expect } = require("chai");
-const { _W, getRole, amountFunction, getAddress } = require("@ensuro/core/js/utils");
-const { setupChain, initForkCurrency } = require("@ensuro/core/js/test-utils");
+const { _W, getRole, amountFunction, getAddress } = require("@ensuro/utils/js/utils");
+const { setupChain, initForkCurrency } = require("@ensuro/utils/js/test-utils");
 const hre = require("hardhat");
 const helpers = require("@nomicfoundation/hardhat-network-helpers");
 
