@@ -135,6 +135,35 @@ variants.forEach((variant) => {
       expect(await usdc.allowance(msgSender, exec1)).to.equal(MaxUint256);
     });
 
+    it("Can execute when called directly (with value)", async () => {
+      const { acAcc, exec1, ep } = await helpers.loadFixture(variant.fixture);
+
+      // Setup - send some eth to acAcc and deposit
+      await expect(() => acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ep, _W(5));
+      expect(await ep.balanceOf(acAcc)).to.equal(_W(5));
+      await expect(() => exec1.sendTransaction({ to: acAcc, value: _W(3) })).to.changeEtherBalance(acAcc, _W(3));
+
+      const addStakeCall = ep.interface.encodeFunctionData("addStake", [3600]);
+
+      if (variant.name == "AccessControlAccount") {
+        await expect(acAcc.connect(exec1).execute(ep, 0, addStakeCall)).to.be.revertedWith("no stake specified");
+      } else {
+        await expect(acAcc.connect(exec1).execute(ep, 0, addStakeCall))
+          .to.be.revertedWithCustomError(acAcc, "CanCallOnlyIfTrustedForwarder")
+          .withArgs(ep);
+      }
+      if (variant.name == "AccessControlAccount") {
+        await expect(() => acAcc.connect(exec1).execute(ep, _W(2), addStakeCall)).to.changeEtherBalance(ep, _W(2));
+        expect(await ep.balanceOf(acAcc)).to.equal(_W(5));
+        expect((await ep.getDepositInfo(acAcc)).stake).to.equal(_W(2));
+      } else {
+        // Keeps failing because it can't call the EP
+        await expect(acAcc.connect(exec1).execute(ep, _W(2), addStakeCall))
+          .to.be.revertedWithCustomError(acAcc, "CanCallOnlyIfTrustedForwarder")
+          .withArgs(ep);
+      }
+    });
+
     it("Can execute when called through entryPoint", async () => {
       const { acAcc, anon, exec1, exec2, usdc, ep } = await helpers.loadFixture(variant.fixture);
       const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);

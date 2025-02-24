@@ -40,11 +40,6 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
   // solhint-disable-next-line no-empty-blocks
   receive() external payable {}
 
-  modifier resetUserOpSigner() {
-    _;
-    _userOpSigner = address(0);
-  }
-
   constructor(IEntryPoint anEntryPoint, address admin, address[] memory executors) {
     _entryPoint = anEntryPoint;
     _grantRole(DEFAULT_ADMIN_ROLE, admin);
@@ -54,10 +49,16 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
   }
 
   // Require the function call went through EntryPoint or authorized executor
-  function _requireFromEntryPointOrExecutor() internal view returns (address sender) {
+  function _requireFromEntryPointOrExecutor() internal returns (address sender) {
     if (msg.sender == address(entryPoint())) {
       require(_userOpSigner != address(0), UserOpSignerNotSet());
-      return _userOpSigner;
+      sender = _userOpSigner;
+      // Since _userOpSigner is only used in `execute` and `executeBatch` methods, when the caller is
+      // the entryPoint. And since the entryPoint only calls these functions after calling _validateSignature,
+      // then not cleaning the _userOpSigner (something that might happen if the exec call fails), shouldn't have
+      // any effect, but I do it anyway, just in case.
+      _userOpSigner = address(0);
+      return sender;
     }
     require(hasRole(EXECUTOR_ROLE, msg.sender), RequiredEntryPointOrExecutor(msg.sender));
     return msg.sender;
@@ -69,7 +70,7 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
    * @param value the value to pass in this call
    * @param func the calldata to pass in this call
    */
-  function execute(address dest, uint256 value, bytes calldata func) external resetUserOpSigner {
+  function execute(address dest, uint256 value, bytes calldata func) external {
     address sender = _requireFromEntryPointOrExecutor();
     require(_isTrustedByTarget(dest), CanCallOnlyIfTrustedForwarder(dest));
     Address.functionCallWithValue(dest, abi.encodePacked(func, sender), value);
@@ -82,11 +83,7 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
    * @param value an array of values to pass to each call. can be zero-length for no-value calls
    * @param func an array of calldata to pass to each call
    */
-  function executeBatch(
-    address[] calldata dest,
-    uint256[] calldata value,
-    bytes[] calldata func
-  ) external resetUserOpSigner {
+  function executeBatch(address[] calldata dest, uint256[] calldata value, bytes[] calldata func) external {
     address sender = _requireFromEntryPointOrExecutor();
     if (dest.length != func.length || (value.length != 0 && value.length != func.length)) revert WrongArrayLength();
     for (uint256 i = 0; i < dest.length; i++) {
