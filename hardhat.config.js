@@ -6,13 +6,13 @@ require("hardhat-contract-sizer");
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
   solidity: {
-    version: "0.8.28",
+    version: "0.8.30",
     settings: {
       optimizer: {
         enabled: true,
         runs: 200,
       },
-      evmVersion: "cancun",
+      evmVersion: "prague",
     },
   },
   contractSizer: {
@@ -22,5 +22,12 @@ module.exports = {
   },
   dependencyCompiler: {
     paths: ["@openzeppelin/contracts/interfaces/IERC20.sol"],
+  },
+  networks: {
+    hardhat: {
+      accounts: {
+        mnemonic: "test test test test test test test test test test test ensu",
+      },
+    },
   },
 };
