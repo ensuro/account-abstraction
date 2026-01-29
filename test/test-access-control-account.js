@@ -321,7 +321,7 @@ variants.forEach((variant) => {
         usdc.interface.encodeFunctionData("transfer", [getAddress(exec1), _A(5)]),
         usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(10)]),
       ];
-      const executeBatchCall = acAcc.interface.encodeFunctionData("executeBatch", [
+      const executeBatchCall = acAcc.interface.encodeFunctionData("executeBatch(address[], uint256[], bytes[])", [
         [getAddress(usdc), getAddress(usdc)],
         [],
         calls,

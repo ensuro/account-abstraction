@@ -70,7 +70,7 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
    * @param value the value to pass in this call
    * @param func the calldata to pass in this call
    */
-  function execute(address dest, uint256 value, bytes calldata func) external {
+  function execute(address dest, uint256 value, bytes calldata func) external override {
     address sender = _requireFromEntryPointOrExecutor();
     require(_isTrustedByTarget(dest), CanCallOnlyIfTrustedForwarder(dest));
     Address.functionCallWithValue(dest, abi.encodePacked(func, sender), value);
