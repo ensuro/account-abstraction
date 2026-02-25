@@ -1,13 +1,13 @@
-const ethers = require("ethers");
+import * as ethers from "ethers";
 const { ZeroAddress } = ethers;
 
 const defaultAbiCoder = ethers.AbiCoder.defaultAbiCoder();
 
-function packAccountGasLimits(verificationGasLimit, callGasLimit) {
+export function packAccountGasLimits(verificationGasLimit, callGasLimit) {
   return ethers.toBeHex(verificationGasLimit, 16) + ethers.toBeHex(callGasLimit, 16).slice(2);
 }
 
-function packUserOp(userOp) {
+export function packUserOp(userOp) {
   const accountGasLimits = packAccountGasLimits(userOp.verificationGasLimit, userOp.callGasLimit);
   const gasFees = packAccountGasLimits(userOp.maxPriorityFeePerGas, userOp.maxFeePerGas);
   let paymasterAndData = "0x";
@@ -32,7 +32,7 @@ function packUserOp(userOp) {
   };
 }
 
-function packedUserOpAsArray(packedUserOp, includeSignature = true) {
+export function packedUserOpAsArray(packedUserOp, includeSignature = true) {
   if (includeSignature) {
     return [
       packedUserOp.sender,
@@ -59,7 +59,7 @@ function packedUserOpAsArray(packedUserOp, includeSignature = true) {
   }
 }
 
-function encodeUserOp(userOp, forSignature = true) {
+export function encodeUserOp(userOp, forSignature = true) {
   const packedUserOp = packUserOp(userOp);
   if (forSignature) {
     return defaultAbiCoder.encode(
@@ -94,13 +94,13 @@ function encodeUserOp(userOp, forSignature = true) {
   }
 }
 
-function getUserOpHash(op, entryPoint, chainId) {
+export function getUserOpHash(op, entryPoint, chainId) {
   const userOpHash = ethers.keccak256(encodeUserOp(op, true));
   const enc = defaultAbiCoder.encode(["bytes32", "address", "uint256"], [userOpHash, entryPoint, chainId]);
   return ethers.keccak256(enc);
 }
 
-const DefaultsForUserOp = {
+export const DefaultsForUserOp = {
   sender: ZeroAddress,
   nonce: 0,
   initCode: "0x",
@@ -117,7 +117,7 @@ const DefaultsForUserOp = {
   signature: "0x",
 };
 
-function signUserOp(op, signer, entryPoint, chainId) {
+export function signUserOp(op, signer, entryPoint, chainId) {
   const message = getUserOpHash(op, entryPoint, chainId);
   const msg1 = Buffer.concat([
     Buffer.from("\x19Ethereum Signed Message:\n32", "ascii"),
@@ -134,7 +134,7 @@ function signUserOp(op, signer, entryPoint, chainId) {
   };
 }
 
-function fillUserOpDefaults(op, defaults = DefaultsForUserOp) {
+export function fillUserOpDefaults(op, defaults = DefaultsForUserOp) {
   const partial = { ...op };
   // we want "item:undefined" to be used from defaults, and not override defaults, so we must explicitly
   // remove those so "merge" will succeed.
@@ -147,14 +147,3 @@ function fillUserOpDefaults(op, defaults = DefaultsForUserOp) {
   const filled = { ...defaults, ...partial };
   return filled;
 }
-
-module.exports = {
-  packAccountGasLimits,
-  packUserOp,
-  packedUserOpAsArray,
-  encodeUserOp,
-  getUserOpHash,
-  DefaultsForUserOp,
-  signUserOp,
-  fillUserOpDefaults,
-};
