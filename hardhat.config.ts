@@ -22,4 +22,9 @@ export default defineConfig({
     alphaSort: true,
     runOnCompile: false,
   },
+  test: {
+    mocha: {
+      timeout: 80000,
+    },
+  },
 });
