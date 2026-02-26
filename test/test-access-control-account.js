@@ -1,12 +1,11 @@
+import { initCurrency, initForkCurrency, setupChain } from "@ensuro/utils/js/test-utils";
+import { _W, amountFunction, getAddress, getRole } from "@ensuro/utils/js/utils";
 import { expect } from "chai";
-import { _W, getRole, amountFunction, getAddress } from "@ensuro/utils/js/utils";
-import { setupChain, initForkCurrency, initCurrency } from "@ensuro/utils/js/test-utils";
+import { MaxUint256, ZeroAddress } from "ethers";
 import hre from "hardhat";
-import * as ethersjs from "ethers";
 
-import { getUserOpHash, packUserOp, packedUserOpAsArray, packAccountGasLimits } from "../js/userOp.js";
-
-const { MaxUint256, ZeroAddress } = ethersjs;
+import { getUserOpHash, packAccountGasLimits, packUserOp, packedUserOpAsArray } from "../js/userOp.js";
+import { loadFixtureOnFork } from "./utils.js";
 
 const _A = amountFunction(6);
 const ADDRESSES = {
@@ -16,12 +15,10 @@ const ADDRESSES = {
   ENTRYPOINT: "0x0000000071727De22E5E9d8BAf0edAc6f37da032",
 };
 
-let connection;
-
 const variants = [
   {
     name: "AccessControlAccount",
-    fixture: async () => {
+    fixture: async (connection) => {
       const { ethers } = connection;
       const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
 
@@ -60,7 +57,7 @@ const variants = [
   },
   {
     name: "ERC2771ForwarderAccount",
-    fixture: async () => {
+    fixture: async (connection) => {
       const { ethers } = connection;
       await setupChain(null);
       const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
@@ -99,16 +96,10 @@ const variants = [
   },
 ];
 
-async function loadFixture(fixture) {
-  // global variable
-  connection = await setupChain(null);
-  return connection.networkHelpers.loadFixture(fixture);
-}
-
 variants.forEach((variant) => {
   describe(`${variant.name} contract tests`, function () {
     it("Constructs with the right permissions and EP", async () => {
-      const { acAcc, anon, exec1, exec2, admin, roles } = await loadFixture(variant.fixture);
+      const { acAcc, anon, exec1, exec2, admin, roles } = await loadFixtureOnFork(variant.fixture);
       expect(await acAcc.hasRole(roles.admin, admin)).to.equal(true);
       expect(await acAcc.hasRole(roles.admin, anon)).to.equal(false);
       expect(await acAcc.hasRole(roles.exec, exec1)).to.equal(true);
@@ -118,7 +109,7 @@ variants.forEach((variant) => {
     });
 
     it("Can receive eth, deposits and only WITHDRAW_ROLE can withdraw", async () => {
-      const { acAcc, anon, withdraw, admin, roles, ep, ethers } = await loadFixture(variant.fixture);
+      const { acAcc, anon, withdraw, admin, roles, ep, ethers } = await loadFixtureOnFork(variant.fixture);
       expect(await ethers.provider.getBalance(acAcc)).to.equal(0);
       await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(
         ethers,
@@ -150,7 +141,7 @@ variants.forEach((variant) => {
     });
 
     it("Can execute when called directly", async () => {
-      const { acAcc, anon, exec1, exec2, usdc, ethers } = await loadFixture(variant.fixture);
+      const { acAcc, anon, exec1, exec2, usdc, ethers } = await loadFixtureOnFork(variant.fixture);
       const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
       await expect(acAcc.connect(anon).execute(usdc, 0, approveExec1))
         .to.be.revertedWithCustomError(acAcc, "RequiredEntryPointOrExecutor")
@@ -163,7 +154,7 @@ variants.forEach((variant) => {
     });
 
     it("Can execute when called directly (with value)", async () => {
-      const { acAcc, exec1, ep, ethers } = await loadFixture(variant.fixture);
+      const { acAcc, exec1, ep, ethers } = await loadFixtureOnFork(variant.fixture);
 
       // Setup - send some eth to acAcc and deposit
       await expect(() => acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ethers, ep, _W(5));
@@ -200,7 +191,7 @@ variants.forEach((variant) => {
     });
 
     it("Can execute when called through entryPoint", async () => {
-      const { acAcc, anon, exec1, exec2, usdc, ep, ethers, helpers } = await loadFixture(variant.fixture);
+      const { acAcc, anon, exec1, exec2, usdc, ep, ethers, helpers } = await loadFixtureOnFork(variant.fixture);
       const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
       const executeCall = acAcc.interface.encodeFunctionData("execute", [getAddress(usdc), 0, approveExec1]);
 
@@ -275,7 +266,7 @@ variants.forEach((variant) => {
     });
 
     it("Can executeBatch when called directly", async () => {
-      const { acAcc, anon, exec1, exec2, usdc, ethers } = await loadFixture(variant.fixture);
+      const { acAcc, anon, exec1, exec2, usdc, ethers } = await loadFixtureOnFork(variant.fixture);
 
       if (variant.name === "AccessControlAccount") {
         // Setup - send some initial money
@@ -301,7 +292,7 @@ variants.forEach((variant) => {
     });
 
     it("Can executeBatch when called directly (with value)", async () => {
-      const { acAcc, exec1, exec2, ep, ethers } = await loadFixture(variant.fixture);
+      const { acAcc, exec1, exec2, ep, ethers } = await loadFixtureOnFork(variant.fixture);
 
       // Setup - send some eth to acAcc and deposit
       await expect(() => acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ethers, ep, _W(5));
@@ -349,7 +340,7 @@ variants.forEach((variant) => {
     });
 
     it("Can executeBatch when called through entryPoint", async () => {
-      const { acAcc, anon, exec1, exec2, usdc, ep, ethers } = await loadFixture(variant.fixture);
+      const { acAcc, anon, exec1, exec2, usdc, ep, ethers } = await loadFixtureOnFork(variant.fixture);
 
       if (variant.name === "AccessControlAccount") {
         // Setup - send some initial money

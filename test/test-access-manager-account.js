@@ -1,13 +1,12 @@
-const { expect } = require("chai");
-const { _W, amountFunction, getAddress } = require("@ensuro/utils/js/utils");
-const { setupChain, initForkCurrency } = require("@ensuro/utils/js/test-utils");
-const hre = require("hardhat");
-const helpers = require("@nomicfoundation/hardhat-network-helpers");
-const withArgs = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
+import { initForkCurrency } from "@ensuro/utils/js/test-utils";
+import { _W, amountFunction, getAddress } from "@ensuro/utils/js/utils";
+import { anyValue } from "@nomicfoundation/hardhat-ethers-chai-matchers/withArgs";
+import { expect } from "chai";
+import { MaxUint256, ZeroAddress } from "ethers";
+import hre from "hardhat";
 
-const { ethers } = hre;
-const { MaxUint256, ZeroAddress } = hre.ethers;
-const { getUserOpHash, packUserOp, packedUserOpAsArray, packAccountGasLimits } = require("../js/userOp.js");
+import { getUserOpHash, packAccountGasLimits, packUserOp, packedUserOpAsArray } from "../js/userOp.js";
+import { loadFixtureOnFork } from "./utils.js";
 
 const _A = amountFunction(6);
 const ADDRESSES = {
@@ -22,7 +21,9 @@ const EXECUTOR_ROLE = 1;
 const WITHDRAW_ROLE = 2;
 const USDC_ROLE = 3;
 
-async function setUp() {
+async function setUp(connection) {
+  const { ethers, networkHelpers: helpers } = connection;
+
   const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
 
   const roles = {
@@ -32,7 +33,13 @@ async function setUp() {
     usdc: USDC_ROLE,
   };
 
-  const usdc = await initForkCurrency(ADDRESSES.USDC, ADDRESSES.USDCWhale, [exec1, exec2], [_A(100), _A(100)]);
+  const usdc = await initForkCurrency(
+    connection,
+    ADDRESSES.USDC,
+    ADDRESSES.USDCWhale,
+    [exec1, exec2],
+    [_A(100), _A(100)]
+  );
   const ep = await ethers.getContractAt("IEntryPoint", ADDRESSES.ENTRYPOINT);
   const AccessManagerAccount = await ethers.getContractFactory("AccessManagerAccount");
 
@@ -67,16 +74,15 @@ async function setUp() {
     withdraw,
     admin,
     usdc,
+    ethers,
+    helpers,
+    connection,
   };
 }
 
 describe("AccessManagerAccount contract tests", function () {
-  before(async () => {
-    await setupChain(null);
-  });
-
   it("Constructs with the right permissions and EP", async () => {
-    const { acAcc, anon, exec1, exec2, admin, roles } = await helpers.loadFixture(setUp);
+    const { acAcc, anon, exec1, exec2, admin, roles } = await loadFixtureOnFork(setUp);
     expect(await acAcc.hasRole(roles.admin, admin)).to.deep.equal([true, 0]);
     expect(await acAcc.hasRole(roles.admin, anon)).to.deep.equal([false, 0]);
     expect(await acAcc.hasRole(roles.exec, exec1)).to.deep.equal([true, 0]);
@@ -86,12 +92,16 @@ describe("AccessManagerAccount contract tests", function () {
   });
 
   it("Can receive eth, deposits and only WITHDRAW_ROLE can withdraw", async () => {
-    const { acAcc, anon, withdraw, admin, roles, ep } = await helpers.loadFixture(setUp);
-    expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(0);
-    await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(acAcc, _W(1));
-    expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(_W(1));
+    const { acAcc, anon, withdraw, admin, roles, ep, ethers } = await loadFixtureOnFork(setUp);
+    expect(await ethers.provider.getBalance(acAcc)).to.equal(0);
+    await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(
+      ethers,
+      acAcc,
+      _W(1)
+    );
+    expect(await ethers.provider.getBalance(acAcc)).to.equal(_W(1));
 
-    await expect(() => acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ep, _W(2));
+    await expect(() => acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ethers, ep, _W(2));
     expect(await ep.balanceOf(acAcc)).to.equal(_W(2));
 
     await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W(1)))
@@ -102,10 +112,11 @@ describe("AccessManagerAccount contract tests", function () {
       .to.be.revertedWithCustomError(acAcc, "AccessManagerUnauthorizedAccount")
       .withArgs(anon, roles.admin);
 
-    await expect(acAcc.connect(admin).grantRole(roles.withdraw, withdraw, 0)).not.to.be.reverted;
+    await expect(acAcc.connect(admin).grantRole(roles.withdraw, withdraw, 0)).not.to.revert(ethers);
     expect(await acAcc.hasRole(roles.withdraw, withdraw)).to.deep.equal([true, 0]);
 
     await expect(() => acAcc.connect(withdraw).withdrawDepositTo(anon, _W("0.5"))).to.changeEtherBalance(
+      ethers,
       anon,
       _W("0.5")
     );
@@ -114,12 +125,16 @@ describe("AccessManagerAccount contract tests", function () {
   });
 
   it("Can receive eth, deposits and only WITHDRAW_ROLE can withdraw - delay variant", async () => {
-    const { acAcc, anon, withdraw, admin, roles, ep } = await helpers.loadFixture(setUp);
-    expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(0);
-    await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(acAcc, _W(1));
-    expect(await hre.ethers.provider.getBalance(acAcc)).to.equal(_W(1));
+    const { acAcc, anon, withdraw, admin, roles, ep, ethers } = await loadFixtureOnFork(setUp);
+    expect(await ethers.provider.getBalance(acAcc)).to.equal(0);
+    await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(
+      ethers,
+      acAcc,
+      _W(1)
+    );
+    expect(await ethers.provider.getBalance(acAcc)).to.equal(_W(1));
 
-    await expect(() => acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ep, _W(2));
+    await expect(() => acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ethers, ep, _W(2));
     expect(await ep.balanceOf(acAcc)).to.equal(_W(2));
 
     await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W(1)))
@@ -130,7 +145,7 @@ describe("AccessManagerAccount contract tests", function () {
       .to.be.revertedWithCustomError(acAcc, "AccessManagerUnauthorizedAccount")
       .withArgs(anon, roles.admin);
 
-    await expect(acAcc.connect(admin).grantRole(roles.withdraw, withdraw, 600)).not.to.be.reverted;
+    await expect(acAcc.connect(admin).grantRole(roles.withdraw, withdraw, 600)).not.to.revert(ethers);
     expect(await acAcc.hasRole(roles.withdraw, withdraw)).to.deep.equal([true, 600]);
 
     await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W(1))).to.be.revertedWithCustomError(
@@ -161,7 +176,7 @@ describe("AccessManagerAccount contract tests", function () {
   });
 
   it("Doesn't use TIMESTAMP or other forbidden opcodes", async () => {
-    const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const { acAcc, anon, exec1, usdc, ep, admin, roles, ethers, connection, helpers } = await loadFixtureOnFork(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
       getAddress(usdc),
@@ -169,7 +184,7 @@ describe("AccessManagerAccount contract tests", function () {
       approveExec1,
     ]);
 
-    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
     expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
 
     // Construct the userOp manually
@@ -179,14 +194,14 @@ describe("AccessManagerAccount contract tests", function () {
       nonce,
       ethers.toUtf8Bytes(""),
       executeCall,
-      packAccountGasLimits(999999, 999999),
-      999999,
+      packAccountGasLimits(200000, 200000),
+      100000,
       packAccountGasLimits(1e9, 1e9),
       ethers.toUtf8Bytes(""),
     ];
     const userOpHash = await ep.getUserOpHash([...userOp, ethers.toUtf8Bytes("")]);
 
-    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.be.reverted;
+    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.revert(ethers);
 
     // Sign the hash
     const message = userOpHash;
@@ -194,7 +209,7 @@ describe("AccessManagerAccount contract tests", function () {
 
     // Call the validateUserOp function on the wallet contract
     await helpers.impersonateAccount(ep.target);
-    const epSigner = await hre.ethers.getSigner(ep.target);
+    const epSigner = await ethers.getSigner(ep.target);
     const validateTx = await acAcc.connect(epSigner).validateUserOp(
       [...userOp, signature],
       userOpHash,
@@ -203,7 +218,7 @@ describe("AccessManagerAccount contract tests", function () {
     await validateTx.wait();
 
     // Use debug_traceTransaction to get the execution trace of the validation call
-    const trace = await hre.network.provider.send("debug_traceTransaction", [
+    const trace = await connection.provider.send("debug_traceTransaction", [
       validateTx.hash,
       { disableStorage: true, disableMemory: true, disableStack: true },
     ]);
@@ -212,12 +227,12 @@ describe("AccessManagerAccount contract tests", function () {
     await expect(executedOpcodes).to.not.contain("TIMESTAMP");
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
-    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
+    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.revert(ethers);
     expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
   });
 
   it("Can execute when called through entryPoint", async () => {
-    const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const { acAcc, anon, exec1, usdc, ep, admin, roles, ethers, connection, helpers } = await loadFixtureOnFork(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
       getAddress(usdc),
@@ -225,7 +240,7 @@ describe("AccessManagerAccount contract tests", function () {
       approveExec1,
     ]);
 
-    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
     expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
 
     // Construct the userOp manually
@@ -235,8 +250,8 @@ describe("AccessManagerAccount contract tests", function () {
       nonce,
       ethers.toUtf8Bytes(""),
       executeCall,
-      packAccountGasLimits(999999, 999999),
-      999999,
+      packAccountGasLimits(200000, 200000),
+      100000,
       packAccountGasLimits(1e9, 1e9),
       ethers.toUtf8Bytes(""),
     ];
@@ -248,9 +263,9 @@ describe("AccessManagerAccount contract tests", function () {
       nonce: nonce,
       initCode: "0x",
       callData: executeCall,
-      callGasLimit: 999999,
-      verificationGasLimit: 999999,
-      preVerificationGas: 999999,
+      callGasLimit: 200000,
+      verificationGasLimit: 200000,
+      preVerificationGas: 100000,
       maxFeePerGas: 1e9,
       maxPriorityFeePerGas: 1e9,
       paymaster: ZeroAddress,
@@ -259,7 +274,7 @@ describe("AccessManagerAccount contract tests", function () {
       paymasterPostOpGasLimit: 0,
       signature: "0x",
     };
-    const { chainId } = await hre.ethers.provider.getNetwork();
+    const { chainId } = await ethers.provider.getNetwork();
     expect(getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId)).to.equal(userOpHash);
 
     // Sign the hash
@@ -275,11 +290,11 @@ describe("AccessManagerAccount contract tests", function () {
       .to.be.revertedWithCustomError(ep, "FailedOp")
       .withArgs(0, "AA24 signature error");
 
-    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.be.reverted;
+    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 0)).not.to.revert(ethers);
 
     // Call the validateUserOp function on the wallet contract
     await helpers.impersonateAccount(ep.target);
-    const epSigner = await hre.ethers.getSigner(ep.target);
+    const epSigner = await ethers.getSigner(ep.target);
     const validateTx = await acAcc.connect(epSigner).validateUserOp(
       [...userOp, signature],
       userOpHash,
@@ -288,7 +303,7 @@ describe("AccessManagerAccount contract tests", function () {
     await validateTx.wait();
 
     // Use debug_traceTransaction to get the execution trace of the validation call
-    const trace = await hre.network.provider.send("debug_traceTransaction", [
+    const trace = await connection.provider.send("debug_traceTransaction", [
       validateTx.hash,
       { disableStorage: true, disableMemory: true, disableStack: true },
     ]);
@@ -297,12 +312,12 @@ describe("AccessManagerAccount contract tests", function () {
     await expect(executedOpcodes).to.not.contain("TIMESTAMP");
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
-    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
+    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.revert(ethers);
     expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
   });
 
   it("Can execute when called through entryPoint - Delay on USDC.approve variant", async () => {
-    const { acAcc, anon, exec1, usdc, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const { acAcc, anon, exec1, usdc, ep, admin, roles, ethers, helpers } = await loadFixtureOnFork(setUp);
     const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
     const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
       getAddress(usdc),
@@ -310,7 +325,7 @@ describe("AccessManagerAccount contract tests", function () {
       approveExec1,
     ]);
 
-    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
 
     const nonce = await acAcc.getNonce();
     const userOpObj = {
@@ -318,9 +333,9 @@ describe("AccessManagerAccount contract tests", function () {
       nonce: nonce,
       initCode: "0x",
       callData: executeCall,
-      callGasLimit: 999999,
-      verificationGasLimit: 999999,
-      preVerificationGas: 999999,
+      callGasLimit: 200000,
+      verificationGasLimit: 200000,
+      preVerificationGas: 100000,
       maxFeePerGas: 1e9,
       maxPriorityFeePerGas: 1e9,
       paymaster: ZeroAddress,
@@ -329,7 +344,7 @@ describe("AccessManagerAccount contract tests", function () {
       paymasterPostOpGasLimit: 0,
       signature: "0x",
     };
-    const { chainId } = await hre.ethers.provider.getNetwork();
+    const { chainId } = await ethers.provider.getNetwork();
     const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
     const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
 
@@ -343,11 +358,11 @@ describe("AccessManagerAccount contract tests", function () {
 
     // Require 600 seconds delay for execute
     await acAcc.connect(admin).grantRole(roles.exec, exec1, 0);
-    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 600)).not.to.be.reverted;
+    await expect(acAcc.connect(admin).grantRole(roles.usdc, exec1, 600)).not.to.revert(ethers);
     // With the correct signature fails because the operation is not scheduled
     await expect(ep.handleOps([[...userOp, signature]], anon))
       .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
-      .withArgs(0, "AA23 reverted", withArgs.anyValue);
+      .withArgs(0, "AA23 reverted", anyValue);
 
     const now = await helpers.time.latest();
     const operationId = await acAcc.hashOperation(exec1, usdc, approveExec1);
@@ -359,20 +374,20 @@ describe("AccessManagerAccount contract tests", function () {
     // Keeps failing because time not increased
     await expect(ep.handleOps([[...userOp, signature]], anon))
       .to.be.revertedWithCustomError(ep, "FailedOpWithRevert")
-      .withArgs(0, "AA23 reverted", withArgs.anyValue);
+      .withArgs(0, "AA23 reverted", anyValue);
 
     await helpers.time.increase(1100);
 
     expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
-    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.be.reverted;
+    await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.revert(ethers);
     expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
   });
 
   it("Can't run other methods than 'execute' through AA", async () => {
-    const { acAcc, anon, exec1, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const { acAcc, anon, exec1, ep, admin, roles, ethers } = await loadFixtureOnFork(setUp);
     const withdrawCall = acAcc.interface.encodeFunctionData("withdrawDepositTo", [getAddress(anon), _W(1)]);
 
-    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
 
     const nonce = await acAcc.getNonce();
     const userOpObj = {
@@ -380,9 +395,9 @@ describe("AccessManagerAccount contract tests", function () {
       nonce: nonce,
       initCode: "0x",
       callData: withdrawCall,
-      callGasLimit: 999999,
-      verificationGasLimit: 999999,
-      preVerificationGas: 999999,
+      callGasLimit: 200000,
+      verificationGasLimit: 200000,
+      preVerificationGas: 100000,
       maxFeePerGas: 1e9,
       maxPriorityFeePerGas: 1e9,
       paymaster: ZeroAddress,
@@ -391,7 +406,7 @@ describe("AccessManagerAccount contract tests", function () {
       paymasterPostOpGasLimit: 0,
       signature: "0x",
     };
-    const { chainId } = await hre.ethers.provider.getNetwork();
+    const { chainId } = await ethers.provider.getNetwork();
     const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
     const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
 
@@ -413,7 +428,7 @@ describe("AccessManagerAccount contract tests", function () {
   });
 
   it("Can't run execute with address(this) as target", async () => {
-    const { acAcc, anon, exec1, ep, admin, roles } = await helpers.loadFixture(setUp);
+    const { acAcc, anon, exec1, ep, admin, roles, ethers } = await loadFixtureOnFork(setUp);
     const withdrawCall = acAcc.interface.encodeFunctionData("withdrawDepositTo", [getAddress(anon), _W(1)]);
     const executeCall = acAcc.interface.encodeFunctionData("execute(address,uint256,bytes)", [
       getAddress(acAcc),
@@ -421,7 +436,7 @@ describe("AccessManagerAccount contract tests", function () {
       withdrawCall,
     ]);
 
-    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ep, _W(9));
+    await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
 
     const nonce = await acAcc.getNonce();
     const userOpObj = {
@@ -429,9 +444,9 @@ describe("AccessManagerAccount contract tests", function () {
       nonce: nonce,
       initCode: "0x",
       callData: executeCall,
-      callGasLimit: 999999,
-      verificationGasLimit: 999999,
-      preVerificationGas: 999999,
+      callGasLimit: 200000,
+      verificationGasLimit: 200000,
+      preVerificationGas: 100000,
       maxFeePerGas: 1e9,
       maxPriorityFeePerGas: 1e9,
       paymaster: ZeroAddress,
@@ -440,7 +455,7 @@ describe("AccessManagerAccount contract tests", function () {
       paymasterPostOpGasLimit: 0,
       signature: "0x",
     };
-    const { chainId } = await hre.ethers.provider.getNetwork();
+    const { chainId } = await ethers.provider.getNetwork();
     const userOpHash = getUserOpHash(userOpObj, ADDRESSES.ENTRYPOINT, chainId);
     const userOp = packedUserOpAsArray(packUserOp(userOpObj), false);
 
