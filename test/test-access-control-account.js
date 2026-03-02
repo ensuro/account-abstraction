@@ -1,4 +1,4 @@
-import { initCurrency, initForkCurrency, setupChain } from "@ensuro/utils/js/test-utils";
+import { initCurrency, initForkCurrency } from "@ensuro/utils/js/test-utils";
 import { _W, amountFunction, getAddress, getRole } from "@ensuro/utils/js/utils";
 import { expect } from "chai";
 import { MaxUint256, ZeroAddress } from "ethers";
@@ -59,7 +59,6 @@ const variants = [
     name: "ERC2771ForwarderAccount",
     fixture: async (connection) => {
       const { ethers } = connection;
-      await setupChain(null);
       const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
 
       const ep = await ethers.getContractAt("IEntryPoint", ADDRESSES.ENTRYPOINT);
