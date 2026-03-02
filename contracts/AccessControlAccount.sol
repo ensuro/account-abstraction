@@ -47,7 +47,7 @@ contract AccessControlAccount is AccessControl, BaseAccount {
    * @param value the value to pass in this call
    * @param func the calldata to pass in this call
    */
-  function execute(address dest, uint256 value, bytes calldata func) external {
+  function execute(address dest, uint256 value, bytes calldata func) external override {
     _requireFromEntryPointOrExecutor();
     Address.functionCallWithValue(dest, func, value);
   }
