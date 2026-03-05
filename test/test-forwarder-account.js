@@ -5,8 +5,8 @@ import { MaxUint256, ZeroAddress } from "ethers";
 import hre from "hardhat";
 import { anyValue } from "@nomicfoundation/hardhat-ethers-chai-matchers/withArgs";
 
-import { getUserOpHash, packAccountGasLimits, packUserOp, packedUserOpAsArray } from "../js/userOp.js";
-import { loadFixtureOnFork } from "./utils.js";
+import { getUserOpHash, packUserOp, packedUserOpAsArray, signUserOp, fillUserOpDefaults } from "../js/userOp.js";
+import { loadFixtureOnFork, TestUserOp } from "./utils.js";
 
 const _A = amountFunction(6);
 const ADDRESSES = {
@@ -75,26 +75,21 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
 
     const nonce = await account.getNonce();
     const { chainId } = await ethers.provider.getNetwork();
-    const userOp = {
-      sender: getAddress(account),
-      nonce: nonce,
-      initCode: "0x",
-      callData: executeUserOpData,
-      callGasLimit: 200000,
-      verificationGasLimit: 200000,
-      preVerificationGas: 100000,
-      maxFeePerGas: 1e9,
-      maxPriorityFeePerGas: 1e9,
-      paymaster: ZeroAddress,
-      paymasterData: "0x",
-      paymasterVerificationGasLimit: 0,
-      paymasterPostOpGasLimit: 0,
-      signature: "0x",
-    };
-    const userOpHash = getUserOpHash(userOp, ADDRESSES.ENTRYPOINT, chainId);
-    const signature = await exec1.signMessage(ethers.getBytes(userOpHash));
-    userOp.signature = signature;
+    const userOp = await signUserOp(
+      fillUserOpDefaults(
+        {
+          sender: getAddress(account),
+          nonce: nonce,
+          callData: executeUserOpData,
+        },
+        TestUserOp
+      ),
+      exec1,
+      ADDRESSES.ENTRYPOINT,
+      chainId
+    );
     const packedUserOp = packedUserOpAsArray(packUserOp(userOp), true);
+    const userOpHash = getUserOpHash(userOp, ADDRESSES.ENTRYPOINT, chainId);
 
     // Sanity check: the user op's signature validates
     await helpers.impersonateAccount(ep.target);
@@ -103,7 +98,15 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     await expect(validationData).to.equal(0);
 
     // Send the userOp
-    await expect(ep.handleOps([packedUserOp], anon)).to.changeTokenBalances(
+    const tx = await ep.handleOps([packedUserOp], anon);
+
+    // These assertions cannot be chained: https://hardhat.org/docs/plugins/hardhat-ethers-chai-matchers#chaining-async-matchers
+    // The UserOperationEvent check is not really necessary, but helps understand what's failing if the test fails
+    await expect(tx)
+      .to.emit(ep, "UserOperationEvent")
+      .withArgs(userOpHash, getAddress(account), anyValue, anyValue, true, anyValue, anyValue);
+
+    await expect(tx).to.changeTokenBalances(
       ethers,
       usdc,
       [exec2, anon, exec1, account],
