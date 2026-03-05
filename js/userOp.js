@@ -117,20 +117,12 @@ export const DefaultsForUserOp = {
   signature: "0x",
 };
 
-export function signUserOp(op, signer, entryPoint, chainId) {
-  const message = getUserOpHash(op, entryPoint, chainId);
-  const msg1 = Buffer.concat([
-    Buffer.from("\x19Ethereum Signed Message:\n32", "ascii"),
-    Buffer.from(arrayify(message)),
-  ]);
-
-  const sig = ecsign(keccak256_buffer(msg1), Buffer.from(arrayify(signer.privateKey)));
-  // that's equivalent of:  await signer.signMessage(message);
-  // (but without "async"
-  const signedMessage1 = toRpcSig(sig.v, sig.r, sig.s);
+export async function signUserOp(op, signer, entryPoint, chainId) {
+  const userOpHash = getUserOpHash(op, entryPoint, chainId);
+  const signature = await signer.signMessage(ethers.getBytes(userOpHash));
   return {
     ...op,
-    signature: signedMessage1,
+    signature,
   };
 }
 
