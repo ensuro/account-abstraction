@@ -50,7 +50,7 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount, IAccountExecute 
   }
 
   // Require the function call went through EntryPoint or authorized executor
-  function _requireFromEntryPointOrExecutor() internal {
+  function _requireFromEntryPointOrExecutor() internal view {
     require(
       msg.sender == address(_entryPoint) || hasRole(EXECUTOR_ROLE, msg.sender),
       RequiredEntryPointOrExecutor(msg.sender)
@@ -58,7 +58,7 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount, IAccountExecute 
   }
 
   /**
-   * execute a transaction (called directly from owner, or by entryPoint)
+   * execute a transaction (called directly from executor, or by entryPoint)
    * @param dest destination address to call
    * @param value the value to pass in this call
    * @param func the calldata to pass in this call
@@ -66,7 +66,7 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount, IAccountExecute 
   function execute(address dest, uint256 value, bytes calldata func) external override {
     _requireFromEntryPointOrExecutor();
     require(_isTrustedByTarget(dest), CanCallOnlyIfTrustedForwarder(dest));
-    Address.functionCallWithValue(dest, func, value);
+    Address.functionCallWithValue(dest, abi.encodePacked(func, address(this)), value);
   }
 
   function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external override {
@@ -93,7 +93,11 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount, IAccountExecute 
         i == 0 ? _isTrustedByTarget(dest[0]) : (dest[i - 1] == dest[i] || _isTrustedByTarget(dest[i])),
         CanCallOnlyIfTrustedForwarder(dest[i])
       );
-      Address.functionCallWithValue(dest[i], func[i], value.length == 0 ? 0 : value[i]);
+      Address.functionCallWithValue(
+        dest[i],
+        abi.encodePacked(func[i], address(this)),
+        value.length == 0 ? 0 : value[i]
+      );
     }
   }
 
