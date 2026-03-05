@@ -10,6 +10,7 @@ import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "@account-abstractio
 import {IEntryPoint} from "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {IAccountExecute} from "@account-abstraction/contracts/interfaces/IAccountExecute.sol";
 
 /**
  * @title ERC2771ForwarderAccount
@@ -20,7 +21,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * @custom:security-contact security@ensuro.co
  * @author Ensuro
  */
-contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
+contract ERC2771ForwarderAccount is AccessControl, BaseAccount, IAccountExecute {
   bytes32 public constant WITHDRAW_ROLE = keccak256("WITHDRAW_ROLE");
   bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
 
@@ -49,19 +50,11 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
   }
 
   // Require the function call went through EntryPoint or authorized executor
-  function _requireFromEntryPointOrExecutor() internal returns (address sender) {
-    if (msg.sender == address(entryPoint())) {
-      require(_userOpSigner != address(0), UserOpSignerNotSet());
-      sender = _userOpSigner;
-      // Since _userOpSigner is only used in `execute` and `executeBatch` methods, when the caller is
-      // the entryPoint. And since the entryPoint only calls these functions after calling _validateSignature,
-      // then not cleaning the _userOpSigner (something that might happen if the exec call fails), shouldn't have
-      // any effect, but I do it anyway, just in case.
-      _userOpSigner = address(0);
-      return sender;
-    }
-    require(hasRole(EXECUTOR_ROLE, msg.sender), RequiredEntryPointOrExecutor(msg.sender));
-    return msg.sender;
+  function _requireFromEntryPointOrExecutor() internal {
+    require(
+      msg.sender == address(_entryPoint) || hasRole(EXECUTOR_ROLE, msg.sender),
+      RequiredEntryPointOrExecutor(msg.sender)
+    );
   }
 
   /**
@@ -71,9 +64,18 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
    * @param func the calldata to pass in this call
    */
   function execute(address dest, uint256 value, bytes calldata func) external override {
-    address sender = _requireFromEntryPointOrExecutor();
+    _requireFromEntryPointOrExecutor();
     require(_isTrustedByTarget(dest), CanCallOnlyIfTrustedForwarder(dest));
-    Address.functionCallWithValue(dest, abi.encodePacked(func, sender), value);
+    Address.functionCallWithValue(dest, func, value);
+  }
+
+  function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external override {
+    _requireFromEntryPointOrExecutor();
+    // No need to check the signer's permission here, as it's already validated in validateUserOp
+    address signer = _getSigner(userOp, userOpHash);
+    (address dest, uint256 value, bytes memory func) = abi.decode(userOp.callData[4:], (address, uint256, bytes));
+    require(_isTrustedByTarget(dest), CanCallOnlyIfTrustedForwarder(dest));
+    Address.functionCallWithValue(dest, abi.encodePacked(func, signer), value);
   }
 
   /**
@@ -84,14 +86,14 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
    * @param func an array of calldata to pass to each call
    */
   function executeBatch(address[] calldata dest, uint256[] calldata value, bytes[] calldata func) external {
-    address sender = _requireFromEntryPointOrExecutor();
+    _requireFromEntryPointOrExecutor();
     if (dest.length != func.length || (value.length != 0 && value.length != func.length)) revert WrongArrayLength();
     for (uint256 i = 0; i < dest.length; i++) {
       require(
         i == 0 ? _isTrustedByTarget(dest[0]) : (dest[i - 1] == dest[i] || _isTrustedByTarget(dest[i])),
         CanCallOnlyIfTrustedForwarder(dest[i])
       );
-      Address.functionCallWithValue(dest[i], abi.encodePacked(func[i], sender), value.length == 0 ? 0 : value[i]);
+      Address.functionCallWithValue(dest[i], func[i], value.length == 0 ? 0 : value[i]);
     }
   }
 
@@ -100,12 +102,14 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal virtual override returns (uint256 validationData) {
-    bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
-    address recovered = ECDSA.recover(hash, userOp.signature);
+    address recovered = _getSigner(userOp, userOpHash);
     if (!hasRole(EXECUTOR_ROLE, recovered)) return SIG_VALIDATION_FAILED;
-    // Store the _userOpSigner so it can be used as _msgSender by execute and executeBatch
-    _userOpSigner = recovered;
     return SIG_VALIDATION_SUCCESS;
+  }
+
+  function _getSigner(PackedUserOperation calldata userop, bytes32 userOpHash) internal pure returns (address) {
+    bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
+    return ECDSA.recover(hash, userop.signature);
   }
 
   /**
