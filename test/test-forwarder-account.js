@@ -1,4 +1,4 @@
-import { initCurrency, initForkCurrency } from "@ensuro/utils/js/test-utils";
+import { initCurrency } from "@ensuro/utils/js/test-utils";
 import { _W, amountFunction, getAddress, getRole, AM_ROLES } from "@ensuro/utils/js/utils";
 import { expect } from "chai";
 import { MaxUint256, ZeroAddress } from "ethers";
@@ -120,5 +120,17 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
       [exec2, anon, exec1, account],
       [_A(-10), _A(10), _A(0), _A(0)]
     );
+  });
+
+  it("Does not allow execute or executeBatch", async () => {
+    const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep } = await loadFixtureOnFork(setup);
+
+    await expect(account.connect(anon).execute(getAddress(usdc), 0, "0x")).to.be.revertedWithCustomError(
+      account,
+      "OnlyExecuteUserOpAllowed"
+    );
+    await expect(
+      account.connect(anon).executeBatch([{ target: getAddress(usdc), value: 0, data: "0x" }])
+    ).to.be.revertedWithCustomError(account, "OnlyExecuteUserOpAllowed");
   });
 });
