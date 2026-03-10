@@ -133,4 +133,48 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
       account.connect(anon).executeBatch([{ target: getAddress(usdc), value: 0, data: "0x" }])
     ).to.be.revertedWithCustomError(account, "OnlyExecuteUserOpAllowed");
   });
+
+  it("Rejects signatures from non-executors", async () => {
+    const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep } = await loadFixtureOnFork(setup);
+
+    const transferCall = usdc.interface.encodeFunctionData("transferFrom", [
+      getAddress(exec2),
+      getAddress(anon),
+      _A(10),
+    ]);
+
+    const executeUserOpData = ethers.concat([
+      account.interface.getFunction("executeUserOp").selector,
+      ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256", "bytes"], [usdc.target, 0, transferCall]),
+    ]);
+
+    const nonce = await account.getNonce();
+    const { chainId } = await ethers.provider.getNetwork();
+    const userOp = await signUserOp(
+      fillUserOpDefaults(
+        {
+          sender: getAddress(account),
+          nonce: nonce,
+          callData: executeUserOpData,
+        },
+        TestUserOp
+      ),
+      anon, // signed by 'anon', who is not an executor
+      ADDRESSES.ENTRYPOINT,
+      chainId
+    );
+    const packedUserOp = packedUserOpAsArray(packUserOp(userOp), true);
+    const userOpHash = getUserOpHash(userOp, ADDRESSES.ENTRYPOINT, chainId);
+
+    // The signature is not accepted
+    await helpers.impersonateAccount(ep.target);
+    const epSigner = await ethers.getSigner(ep.target);
+    const validationData = await account.connect(epSigner).validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
+    await expect(validationData).to.equal(1);
+
+    // The userop execution is rejected too
+    await expect(account.executeUserOp(packedUserOp, userOpHash))
+      .to.be.revertedWithCustomError(account, "InvalidTarget")
+      .withArgs(getAddress(usdc), getAddress(anon));
+  });
 });
