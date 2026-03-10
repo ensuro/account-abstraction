@@ -67,10 +67,10 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
   // solhint-disable-next-line no-empty-blocks
   function _authorizeUpgrade(address newImpl) internal view override {}
 
-  //solhint-disable-next-line no-empty-blocks
   /**
    * @dev This is a noop, for deployment convenience where an initializer is expected.
    */
+  //solhint-disable-next-line no-empty-blocks
   function initialize() external {}
 
   // solhint-disable-next-line no-empty-blocks
