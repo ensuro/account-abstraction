@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@account-abstraction/contracts": "^0.8.0",
+    "@openzeppelin/contracts-upgradeable": "^5.5.0",
     "@openzeppelin/contracts": "^5.5.0",
     "solidity-ast": "^0.4.61",
     "solidity-bytes-utils": "^0.8.0"

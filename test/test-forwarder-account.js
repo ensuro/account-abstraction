@@ -1,5 +1,5 @@
 import { initCurrency, initForkCurrency } from "@ensuro/utils/js/test-utils";
-import { _W, amountFunction, getAddress, getRole } from "@ensuro/utils/js/utils";
+import { _W, amountFunction, getAddress, getRole, AM_ROLES } from "@ensuro/utils/js/utils";
 import { expect } from "chai";
 import { MaxUint256, ZeroAddress } from "ethers";
 import hre from "hardhat";
@@ -18,18 +18,26 @@ const ADDRESSES = {
 
 async function setup(connection) {
   const { ethers } = connection;
-  const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
+  const [deployer, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
 
   const ep = await ethers.getContractAt("IEntryPoint", ADDRESSES.ENTRYPOINT);
   const ERC2771ForwarderAccount = await ethers.getContractFactory("ERC2771ForwarderAccount");
-  const account = await ERC2771ForwarderAccount.deploy(ep, admin, [exec1, exec2]);
-  await expect(account.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
+  const account = await ERC2771ForwarderAccount.deploy(ep);
+
   const usdc = await initCurrency(
     ethers,
     { decimals: 6, initial_supply: _A(10000), extraArgs: [account], contractClass: "ERC20With2771" },
     [exec1, exec2],
     [_A(100), _A(100)]
   );
+
+  await account.setExecutors([
+    { executor: getAddress(exec1), target: usdc },
+    { executor: getAddress(exec2), target: usdc },
+  ]);
+
+  await expect(account.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
+
   const roles = {
     admin: getRole("DEFAULT_ADMIN_ROLE"),
     exec: getRole("EXECUTOR_ROLE"),
@@ -37,19 +45,19 @@ async function setup(connection) {
   };
 
   return {
+    account,
+    admin,
+    anon,
+    connection,
     ep,
     ERC2771ForwarderAccount,
-    account,
+    ethers,
     exec1,
     exec2,
-    anon,
-    withdraw,
-    admin,
+    helpers: connection.networkHelpers,
     roles,
     usdc,
-    ethers,
-    connection,
-    helpers: connection.networkHelpers,
+    withdraw,
   };
 }
 
@@ -98,7 +106,7 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     await expect(validationData).to.equal(0);
 
     // Send the userOp
-    const tx = await ep.handleOps([packedUserOp], anon);
+    const tx = await ep.handleOps([packedUserOp], anon, { gasLimit: 1000000n });
 
     // These assertions cannot be chained: https://hardhat.org/docs/plugins/hardhat-ethers-chai-matchers#chaining-async-matchers
     // The UserOperationEvent check is not really necessary, but helps understand what's failing if the test fails

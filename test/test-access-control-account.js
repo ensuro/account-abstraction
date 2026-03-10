@@ -55,44 +55,6 @@ const variants = [
       };
     },
   },
-  {
-    name: "ERC2771ForwarderAccount",
-    fixture: async (connection) => {
-      const { ethers } = connection;
-      const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
-
-      const ep = await ethers.getContractAt("IEntryPoint", ADDRESSES.ENTRYPOINT);
-      const ERC2771ForwarderAccount = await ethers.getContractFactory("ERC2771ForwarderAccount");
-      const acAcc = await ERC2771ForwarderAccount.deploy(ep, admin, [exec1, exec2]);
-      const usdc = await initCurrency(
-        ethers,
-        { decimals: 6, initial_supply: _A(10000), extraArgs: [acAcc], contractClass: "ERC20With2771" },
-        [exec1, exec2],
-        [_A(100), _A(100)]
-      );
-      const roles = {
-        admin: getRole("DEFAULT_ADMIN_ROLE"),
-        exec: getRole("EXECUTOR_ROLE"),
-        withdraw: getRole("WITHDRAW_ROLE"),
-      };
-
-      return {
-        ep,
-        ERC2771ForwarderAccount,
-        acAcc,
-        exec1,
-        exec2,
-        anon,
-        withdraw,
-        admin,
-        roles,
-        usdc,
-        ethers,
-        connection,
-        helpers: connection.networkHelpers,
-      };
-    },
-  },
 ];
 
 variants.forEach((variant) => {
