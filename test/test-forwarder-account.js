@@ -31,18 +31,10 @@ async function setup(connection) {
     [_A(100), _A(100)]
   );
 
-  await account.setExecutors([
-    { executor: getAddress(exec1), target: usdc },
-    { executor: getAddress(exec2), target: usdc },
-  ]);
+  await account.addExecutor(getAddress(exec1), usdc);
+  await account.addExecutor(getAddress(exec2), usdc);
 
   await expect(account.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
-
-  const roles = {
-    admin: getRole("DEFAULT_ADMIN_ROLE"),
-    exec: getRole("EXECUTOR_ROLE"),
-    withdraw: getRole("WITHDRAW_ROLE"),
-  };
 
   return {
     account,
@@ -55,7 +47,6 @@ async function setup(connection) {
     exec1,
     exec2,
     helpers: connection.networkHelpers,
-    roles,
     usdc,
     withdraw,
   };
@@ -134,7 +125,22 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     ).to.be.revertedWithCustomError(account, "OnlyExecuteUserOpAllowed");
   });
 
-  it("Rejects signatures from non-executors", async () => {
+  it("Allows deposit and withdraw into the EntryPoint", async () => {
+    const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep, withdraw } =
+      await loadFixtureOnFork(setup);
+
+    const balanceBefore = await account.getDeposit();
+    await expect(account.addDeposit({ value: _W(1) })).to.changeEtherBalance(ethers, ep, _W(1));
+    expect(await account.getDeposit()).to.equal(balanceBefore + _W(1));
+
+    await expect(account.withdrawDepositTo(getAddress(withdraw), _W(0.5))).to.changeEtherBalance(
+      ethers,
+      withdraw,
+      _W(0.5)
+    );
+  });
+
+  it("Can add executors", async () => {
     const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep } = await loadFixtureOnFork(setup);
 
     const transferCall = usdc.interface.encodeFunctionData("transferFrom", [
@@ -148,13 +154,12 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
       ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256", "bytes"], [usdc.target, 0, transferCall]),
     ]);
 
-    const nonce = await account.getNonce();
     const { chainId } = await ethers.provider.getNetwork();
     const userOp = await signUserOp(
       fillUserOpDefaults(
         {
           sender: getAddress(account),
-          nonce: nonce,
+          nonce: await account.getNonce(),
           callData: executeUserOpData,
         },
         TestUserOp
@@ -176,5 +181,60 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     await expect(account.executeUserOp(packedUserOp, userOpHash))
       .to.be.revertedWithCustomError(account, "InvalidTarget")
       .withArgs(getAddress(usdc), getAddress(anon));
+
+    // Add 'anon' as executor with 'usdc' as target
+    await expect(account.addExecutor(getAddress(anon), usdc))
+      .to.emit(account, "ExecutorAdded")
+      .withArgs(getAddress(anon), usdc);
+
+    // The signature is now accepted
+    const validationDataAfterAddition = await account
+      .connect(epSigner)
+      .validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
+    await expect(validationDataAfterAddition).to.equal(0);
+  });
+
+  it("Can remove executors", async () => {
+    const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep } = await loadFixtureOnFork(setup);
+
+    const { chainId } = await ethers.provider.getNetwork();
+    const userOp = await signUserOp(
+      fillUserOpDefaults(
+        {
+          sender: getAddress(account),
+          nonce: await account.getNonce(),
+          callData: ethers.concat([
+            account.interface.getFunction("executeUserOp").selector,
+            ethers.AbiCoder.defaultAbiCoder().encode(
+              ["address", "uint256", "bytes"],
+              [usdc.target, 0, usdc.interface.encodeFunctionData("decimals", [])]
+            ),
+          ]),
+        },
+        TestUserOp
+      ),
+      exec1,
+      ADDRESSES.ENTRYPOINT,
+      chainId
+    );
+    const packedUserOp = packedUserOpAsArray(packUserOp(userOp), true);
+    const userOpHash = getUserOpHash(userOp, ADDRESSES.ENTRYPOINT, chainId);
+
+    // The signature is accepted
+    await helpers.impersonateAccount(ep.target);
+    const epSigner = await ethers.getSigner(ep.target);
+    const validationData = await account.connect(epSigner).validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
+    await expect(validationData).to.equal(0);
+
+    // Remove exec1 as executor
+    await expect(account.removeExecutor(getAddress(exec1)))
+      .to.emit(account, "ExecutorRemoved")
+      .withArgs(getAddress(exec1));
+
+    // The signature is no longer accepted
+    const validationDataAfterRemoval = await account
+      .connect(epSigner)
+      .validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
+    await expect(validationDataAfterRemoval).to.equal(1);
   });
 });

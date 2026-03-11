@@ -26,9 +26,6 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
  * @author Ensuro
  */
 contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecute {
-  bytes32 public constant WITHDRAW_ROLE = keccak256("WITHDRAW_ROLE");
-  bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
-
   IEntryPoint private immutable _entryPoint;
 
   /// @custom:storage-location erc7201:ensuro.storage.ERC2771ForwarderAccount
@@ -48,13 +45,8 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     }
   }
 
-  /**
-   * @dev Executor definition for input parameters
-   */
-  struct ExecutorDefinition {
-    address executor;
-    ERC2771Context target;
-  }
+  event ExecutorAdded(address indexed executor, ERC2771Context target);
+  event ExecutorRemoved(address indexed executor);
 
   error RequiredEntryPointOrExecutor(address sender);
   error InvalidTarget(ERC2771Context target, address signer);
@@ -108,14 +100,24 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
   }
 
   /**
-   * @notice Set the executors and their corresponding target contracts.
-   * @param executors array of {executor, target} to set
+   * @notice Add an executor and its corresponding target contract.
+   * @param executor The executor address to add
+   * @param target The ERC2771Context target contract for this executor
    */
-  function setExecutors(ExecutorDefinition[] calldata executors) external {
+  function addExecutor(address executor, ERC2771Context target) external {
     ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
-    for (uint256 i = 0; i < executors.length; i++) {
-      $.targets[executors[i].executor] = executors[i].target;
-    }
+    $.targets[executor] = target;
+    emit ExecutorAdded(executor, target);
+  }
+
+  /**
+   * @notice Remove an executor by setting its target to the zero address.
+   * @param executor The executor address to remove
+   */
+  function removeExecutor(address executor) external {
+    ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
+    $.targets[executor] = ERC2771Context(address(0));
+    emit ExecutorRemoved(executor);
   }
 
   /// implement template method of BaseAccount
