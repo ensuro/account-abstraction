@@ -1,98 +1,127 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.23;
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
-import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {BaseAccount} from "@account-abstraction/contracts/core/BaseAccount.sol";
-import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "@account-abstraction/contracts/core/Helpers.sol";
-import {IEntryPoint} from "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
-import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {ERC2771Context} from "@openzeppelin/contracts/metatx/ERC2771Context.sol";
+import {IAccountExecute} from "@account-abstraction/contracts/interfaces/IAccountExecute.sol";
+import {IEntryPoint} from "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
+import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "@account-abstraction/contracts/core/Helpers.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /**
  * @title ERC2771ForwarderAccount
  *
- * @dev Smart Account that acts as an ERC2771 Trusted Forwarder, forwarding calls to other contract(s) where
- *      the account is the trusted forwarder, on behalf of the signer of the userOp.
+ * @dev Smart Account that acts as an ERC2771 Trusted Forwarder, forwarding calls to a pre-defined contract
+ *      on behalf of the signer of the userOp.
+ *
+ *      Assumes the target contract is designed to work with ERC2771Context and trusts this account as a forwarder.
+ *
+ *      This contract is designed to be used with an AccessManagedProxy for runtime access control management.
  *
  * @custom:security-contact security@ensuro.co
  * @author Ensuro
  */
-contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
-  bytes32 public constant WITHDRAW_ROLE = keccak256("WITHDRAW_ROLE");
-  bytes32 public constant EXECUTOR_ROLE = keccak256("EXECUTOR_ROLE");
-
+contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecute {
   IEntryPoint private immutable _entryPoint;
-  address internal transient _userOpSigner;
+
+  /// @custom:storage-location erc7201:ensuro.storage.ERC2771ForwarderAccount
+  struct ERC2771ForwarderAccountStorage {
+    mapping(address => ERC2771Context) targets;
+  }
+
+  // keccak256(abi.encode(uint256(keccak256("ensuro.storage.ERC2771ForwarderAccount")) - 1)) & ~bytes32(uint256(0xff))
+  // solhint-disable-next-line const-name-snakecase
+  bytes32 internal constant ERC2771ForwarderAccountStorageLocation =
+    0x32800a8a254400b8b55434a22b827759dcb96a572133b419f26b7155e3843000;
+
+  function _getAccountStorage() internal pure returns (ERC2771ForwarderAccountStorage storage $) {
+    // solhint-disable-next-line no-inline-assembly
+    assembly {
+      $.slot := ERC2771ForwarderAccountStorageLocation
+    }
+  }
+
+  event ExecutorAdded(address indexed executor, ERC2771Context indexed target);
+  event ExecutorRemoved(address indexed executor);
 
   error RequiredEntryPointOrExecutor(address sender);
-  error UserOpSignerNotSet();
-  error CanCallOnlyIfTrustedForwarder(address target);
-  error WrongArrayLength();
+  error InvalidTarget(ERC2771Context target, address signer);
+  error OnlyExecuteUserOpAllowed();
+  error InvalidCall();
 
-  /// @inheritdoc BaseAccount
-  function entryPoint() public view virtual override returns (IEntryPoint) {
-    return _entryPoint;
+  constructor(IEntryPoint anEntryPoint) {
+    _entryPoint = anEntryPoint;
   }
+
+  // solhint-disable-next-line no-empty-blocks
+  function _authorizeUpgrade(address newImpl) internal view override {}
+
+  /**
+   * @dev This is a noop, for deployment convenience where an initializer is expected.
+   */
+  //solhint-disable-next-line no-empty-blocks
+  function initialize() external {}
 
   // solhint-disable-next-line no-empty-blocks
   receive() external payable {}
 
-  constructor(IEntryPoint anEntryPoint, address admin, address[] memory executors) {
-    _entryPoint = anEntryPoint;
-    _grantRole(DEFAULT_ADMIN_ROLE, admin);
-    for (uint256 i; i < executors.length; i++) {
-      _grantRole(EXECUTOR_ROLE, executors[i]);
-    }
+  function executeBatch(Call[] calldata) external virtual override {
+    revert OnlyExecuteUserOpAllowed();
   }
 
-  // Require the function call went through EntryPoint or authorized executor
-  function _requireFromEntryPointOrExecutor() internal returns (address sender) {
-    if (msg.sender == address(entryPoint())) {
-      require(_userOpSigner != address(0), UserOpSignerNotSet());
-      sender = _userOpSigner;
-      // Since _userOpSigner is only used in `execute` and `executeBatch` methods, when the caller is
-      // the entryPoint. And since the entryPoint only calls these functions after calling _validateSignature,
-      // then not cleaning the _userOpSigner (something that might happen if the exec call fails), shouldn't have
-      // any effect, but I do it anyway, just in case.
-      _userOpSigner = address(0);
-      return sender;
-    }
-    require(hasRole(EXECUTOR_ROLE, msg.sender), RequiredEntryPointOrExecutor(msg.sender));
-    return msg.sender;
+  function execute(address, uint256, bytes calldata) external virtual override {
+    revert OnlyExecuteUserOpAllowed();
+  }
+
+  function _getSigner(PackedUserOperation calldata userop, bytes32 userOpHash) internal pure returns (address) {
+    bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
+    return ECDSA.recover(hash, userop.signature);
   }
 
   /**
-   * execute a transaction (called directly from owner, or by entryPoint)
-   * @param dest destination address to call
-   * @param value the value to pass in this call
-   * @param func the calldata to pass in this call
+   * @dev Validates that the user operation is well formed and that the destination is correct. Does not validate signature.
+   * @return call A Call struct containing the call to be made
    */
-  function execute(address dest, uint256 value, bytes calldata func) external override {
-    address sender = _requireFromEntryPointOrExecutor();
-    require(_isTrustedByTarget(dest), CanCallOnlyIfTrustedForwarder(dest));
-    Address.functionCallWithValue(dest, abi.encodePacked(func, sender), value);
+  function _validateAndDecodeCall(
+    PackedUserOperation calldata userOp,
+    bytes32 userOpHash
+  ) internal pure returns (Call memory call) {
+    require(userOp.callData.length >= 56 && bytes4(userOp.callData[0:4]) == this.executeUserOp.selector, InvalidCall());
+    (call.target, call.value, call.data) = abi.decode(userOp.callData[4:], (address, uint256, bytes));
+    if (call.target == address(0)) {
+      // This is an if and not a require to avoid evaluating the _getSigner call in the happy path
+      revert InvalidTarget(ERC2771Context(call.target), _getSigner(userOp, userOpHash));
+    }
+  }
+
+  function _isAuthorized(address signer, address target) internal view returns (bool) {
+    ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
+    return $.targets[signer] == ERC2771Context(target);
   }
 
   /**
-   * execute a sequence of transactions
-   * @dev to reduce gas consumption for trivial case (no value), use a zero-length array to mean zero value
-   * @param dest an array of destination addresses
-   * @param value an array of values to pass to each call. can be zero-length for no-value calls
-   * @param func an array of calldata to pass to each call
+   * @notice Add an executor and its corresponding target contract.
+   * @param executor The executor address to add
+   * @param target The ERC2771Context target contract for this executor
    */
-  function executeBatch(address[] calldata dest, uint256[] calldata value, bytes[] calldata func) external {
-    address sender = _requireFromEntryPointOrExecutor();
-    if (dest.length != func.length || (value.length != 0 && value.length != func.length)) revert WrongArrayLength();
-    for (uint256 i = 0; i < dest.length; i++) {
-      require(
-        i == 0 ? _isTrustedByTarget(dest[0]) : (dest[i - 1] == dest[i] || _isTrustedByTarget(dest[i])),
-        CanCallOnlyIfTrustedForwarder(dest[i])
-      );
-      Address.functionCallWithValue(dest[i], abi.encodePacked(func[i], sender), value.length == 0 ? 0 : value[i]);
-    }
+  function addExecutor(address executor, ERC2771Context target) external {
+    ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
+    $.targets[executor] = target;
+    emit ExecutorAdded(executor, target);
+  }
+
+  /**
+   * @notice Remove an executor by setting its target to the zero address.
+   * @param executor The executor address to remove
+   */
+  function removeExecutor(address executor) external {
+    ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
+    $.targets[executor] = ERC2771Context(address(0));
+    emit ExecutorRemoved(executor);
   }
 
   /// implement template method of BaseAccount
@@ -100,41 +129,32 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal virtual override returns (uint256 validationData) {
-    bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
-    address recovered = ECDSA.recover(hash, userOp.signature);
-    if (!hasRole(EXECUTOR_ROLE, recovered)) return SIG_VALIDATION_FAILED;
-    // Store the _userOpSigner so it can be used as _msgSender by execute and executeBatch
-    _userOpSigner = recovered;
+    Call memory call = _validateAndDecodeCall(userOp, userOpHash);
+    address signer = _getSigner(userOp, userOpHash);
+    if (!_isAuthorized(signer, call.target)) {
+      return SIG_VALIDATION_FAILED;
+    }
     return SIG_VALIDATION_SUCCESS;
   }
 
   /**
-   * @dev Returns whether the target trusts this forwarder.
+   * @dev Executes a user operation by forwarding the call to the target contract with the signer as the msgSender.
+   *      It re-validates the signature and checks that the signer is authorized. Reverts with InvalidTarget if it isn't.
+   *      The calldata is expected to contain this function's selector followed by an ABI-encoded Call:
+   *         - dest (address): the target contract address (must be the same as _target)
+   *         - value (uint256): the amount of ETH to send with the call
+   *         - func (bytes): the calldata for the target function
    *
-   * This function performs a static call to the target contract calling the
-   * {ERC2771Context-isTrustedForwarder} function.
-   *
-   * Copied from ERC2771Forwarder.sol (OZ-contracts)
+   * @param userOp The packed user operation containing the call data and signature.
+   * @param userOpHash The hash of the user operation, used for signature verification.
    */
-  function _isTrustedByTarget(address target) private view returns (bool) {
-    bytes memory encodedParams = abi.encodeCall(ERC2771Context.isTrustedForwarder, (address(this)));
+  function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external override {
+    Call memory call = _validateAndDecodeCall(userOp, userOpHash);
+    address signer = _getSigner(userOp, userOpHash);
 
-    bool success;
-    uint256 returnSize;
-    uint256 returnValue;
-    // solhint-disable-next-line no-inline-assembly
-    assembly ("memory-safe") {
-      // Perform the staticcall and save the result in the scratch space.
-      // | Location  | Content  | Content (Hex)                                                      |
-      // |-----------|----------|--------------------------------------------------------------------|
-      // |           |          |                                                           result ↓ |
-      // | 0x00:0x1F | selector | 0x0000000000000000000000000000000000000000000000000000000000000001 |
-      success := staticcall(gas(), target, add(encodedParams, 0x20), mload(encodedParams), 0, 0x20)
-      returnSize := returndatasize()
-      returnValue := mload(0)
-    }
+    require(_isAuthorized(signer, call.target), InvalidTarget(ERC2771Context(call.target), signer));
 
-    return success && returnSize >= 0x20 && returnValue > 0;
+    Address.functionCallWithValue(call.target, abi.encodePacked(call.data, signer), call.value);
   }
 
   /**
@@ -156,7 +176,12 @@ contract ERC2771ForwarderAccount is AccessControl, BaseAccount {
    * @param withdrawAddress target to send to
    * @param amount to withdraw
    */
-  function withdrawDepositTo(address payable withdrawAddress, uint256 amount) public onlyRole(WITHDRAW_ROLE) {
+  function withdrawDepositTo(address payable withdrawAddress, uint256 amount) public {
     entryPoint().withdrawTo(withdrawAddress, amount);
+  }
+
+  /// @inheritdoc BaseAccount
+  function entryPoint() public view virtual override returns (IEntryPoint) {
+    return _entryPoint;
   }
 }

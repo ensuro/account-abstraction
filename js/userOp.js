@@ -105,32 +105,24 @@ export const DefaultsForUserOp = {
   nonce: 0,
   initCode: "0x",
   callData: "0x",
-  callGasLimit: 0,
-  verificationGasLimit: 150000, // default verification gas. will add create2 cost (3200+200*length) if initCode exists
-  preVerificationGas: 21000, // should also cover calldata cost.
-  maxFeePerGas: 0,
+  callGasLimit: 0n,
+  verificationGasLimit: 150000n, // default verification gas. will add create2 cost (3200+200*length) if initCode exists
+  preVerificationGas: 21000n, // should also cover calldata cost.
+  maxFeePerGas: 0n,
   maxPriorityFeePerGas: 1e9,
   paymaster: ZeroAddress,
   paymasterData: "0x",
-  paymasterVerificationGasLimit: 3e5,
+  paymasterVerificationGasLimit: 300000n,
   paymasterPostOpGasLimit: 0,
   signature: "0x",
 };
 
-export function signUserOp(op, signer, entryPoint, chainId) {
-  const message = getUserOpHash(op, entryPoint, chainId);
-  const msg1 = Buffer.concat([
-    Buffer.from("\x19Ethereum Signed Message:\n32", "ascii"),
-    Buffer.from(arrayify(message)),
-  ]);
-
-  const sig = ecsign(keccak256_buffer(msg1), Buffer.from(arrayify(signer.privateKey)));
-  // that's equivalent of:  await signer.signMessage(message);
-  // (but without "async"
-  const signedMessage1 = toRpcSig(sig.v, sig.r, sig.s);
+export async function signUserOp(op, signer, entryPoint, chainId) {
+  const userOpHash = getUserOpHash(op, entryPoint, chainId);
+  const signature = await signer.signMessage(ethers.getBytes(userOpHash));
   return {
     ...op,
-    signature: signedMessage1,
+    signature,
   };
 }
 

@@ -55,44 +55,6 @@ const variants = [
       };
     },
   },
-  {
-    name: "ERC2771ForwarderAccount",
-    fixture: async (connection) => {
-      const { ethers } = connection;
-      const [, exec1, exec2, anon, withdraw, admin] = await ethers.getSigners();
-
-      const ep = await ethers.getContractAt("IEntryPoint", ADDRESSES.ENTRYPOINT);
-      const ERC2771ForwarderAccount = await ethers.getContractFactory("ERC2771ForwarderAccount");
-      const acAcc = await ERC2771ForwarderAccount.deploy(ep, admin, [exec1, exec2]);
-      const usdc = await initCurrency(
-        ethers,
-        { decimals: 6, initial_supply: _A(10000), extraArgs: [acAcc], contractClass: "ERC20With2771" },
-        [exec1, exec2],
-        [_A(100), _A(100)]
-      );
-      const roles = {
-        admin: getRole("DEFAULT_ADMIN_ROLE"),
-        exec: getRole("EXECUTOR_ROLE"),
-        withdraw: getRole("WITHDRAW_ROLE"),
-      };
-
-      return {
-        ep,
-        ERC2771ForwarderAccount,
-        acAcc,
-        exec1,
-        exec2,
-        anon,
-        withdraw,
-        admin,
-        roles,
-        usdc,
-        ethers,
-        connection,
-        helpers: connection.networkHelpers,
-      };
-    },
-  },
 ];
 
 variants.forEach((variant) => {
@@ -110,14 +72,10 @@ variants.forEach((variant) => {
     it("Can receive eth, deposits and only WITHDRAW_ROLE can withdraw", async () => {
       const { acAcc, anon, withdraw, admin, roles, ep, ethers } = await loadFixtureOnFork(variant.fixture);
       expect(await ethers.provider.getBalance(acAcc)).to.equal(0);
-      await expect(() => withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(
-        ethers,
-        acAcc,
-        _W(1)
-      );
+      await expect(withdraw.sendTransaction({ to: acAcc, value: _W(1) })).to.changeEtherBalance(ethers, acAcc, _W(1));
       expect(await ethers.provider.getBalance(acAcc)).to.equal(_W(1));
 
-      await expect(() => acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ethers, ep, _W(2));
+      await expect(acAcc.addDeposit({ value: _W(2) })).to.changeEtherBalance(ethers, ep, _W(2));
       expect(await ep.balanceOf(acAcc)).to.equal(_W(2));
 
       await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W(1)))
@@ -130,7 +88,7 @@ variants.forEach((variant) => {
 
       await expect(acAcc.connect(admin).grantRole(roles.withdraw, withdraw)).not.to.revert(ethers);
 
-      await expect(() => acAcc.connect(withdraw).withdrawDepositTo(anon, _W("0.5"))).to.changeEtherBalance(
+      await expect(acAcc.connect(withdraw).withdrawDepositTo(anon, _W("0.5"))).to.changeEtherBalance(
         ethers,
         anon,
         _W("0.5")
@@ -145,24 +103,18 @@ variants.forEach((variant) => {
       await expect(acAcc.connect(anon).execute(usdc, 0, approveExec1))
         .to.be.revertedWithCustomError(acAcc, "RequiredEntryPointOrExecutor")
         .withArgs(anon);
-      // The msgSender that interacts with the ERC20 contract changes from one variant to the other
-      const msgSender = variant.name === "AccessControlAccount" ? acAcc : exec2;
-      expect(await usdc.allowance(msgSender, exec1)).to.equal(0);
+      expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
       await expect(acAcc.connect(exec2).execute(usdc, 0, approveExec1)).not.to.revert(ethers);
-      expect(await usdc.allowance(msgSender, exec1)).to.equal(MaxUint256);
+      expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
     });
 
     it("Can execute when called directly (with value)", async () => {
       const { acAcc, exec1, ep, ethers } = await loadFixtureOnFork(variant.fixture);
 
       // Setup - send some eth to acAcc and deposit
-      await expect(() => acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ethers, ep, _W(5));
+      await expect(acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ethers, ep, _W(5));
       expect(await ep.balanceOf(acAcc)).to.equal(_W(5));
-      await expect(() => exec1.sendTransaction({ to: acAcc, value: _W(3) })).to.changeEtherBalance(
-        ethers,
-        acAcc,
-        _W(3)
-      );
+      await expect(exec1.sendTransaction({ to: acAcc, value: _W(3) })).to.changeEtherBalance(ethers, acAcc, _W(3));
 
       const addStakeCall = ep.interface.encodeFunctionData("addStake", [3600]);
 
@@ -174,11 +126,7 @@ variants.forEach((variant) => {
           .withArgs(ep);
       }
       if (variant.name == "AccessControlAccount") {
-        await expect(() => acAcc.connect(exec1).execute(ep, _W(2), addStakeCall)).to.changeEtherBalance(
-          ethers,
-          ep,
-          _W(2)
-        );
+        await expect(acAcc.connect(exec1).execute(ep, _W(2), addStakeCall)).to.changeEtherBalance(ethers, ep, _W(2));
         expect(await ep.balanceOf(acAcc)).to.equal(_W(5));
         expect((await ep.getDepositInfo(acAcc)).stake).to.equal(_W(2));
       } else {
@@ -194,7 +142,7 @@ variants.forEach((variant) => {
       const approveExec1 = usdc.interface.encodeFunctionData("approve", [getAddress(exec1), MaxUint256]);
       const executeCall = acAcc.interface.encodeFunctionData("execute", [getAddress(usdc), 0, approveExec1]);
 
-      await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
+      await expect(acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
       expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
 
       // Construct the userOp manually
@@ -258,21 +206,18 @@ variants.forEach((variant) => {
       const executedOpcodes = trace.structLogs.map((log) => log.op);
       await expect(executedOpcodes).to.not.contain("TIMESTAMP");
 
-      const msgSender = variant.name === "AccessControlAccount" ? acAcc : exec2;
-      expect(await usdc.allowance(msgSender, exec1)).to.equal(0);
+      expect(await usdc.allowance(acAcc, exec1)).to.equal(0);
       await expect(ep.handleOps([[...userOp, signature]], anon)).not.to.revert(ethers);
-      expect(await usdc.allowance(msgSender, exec1)).to.equal(MaxUint256);
+      expect(await usdc.allowance(acAcc, exec1)).to.equal(MaxUint256);
     });
 
     it("Can executeBatch when called directly", async () => {
       const { acAcc, anon, exec1, exec2, usdc, ethers } = await loadFixtureOnFork(variant.fixture);
 
-      if (variant.name === "AccessControlAccount") {
-        // Setup - send some initial money
-        await usdc.connect(exec1).transfer(acAcc, _A(10));
-        await usdc.connect(exec2).transfer(acAcc, _A(20));
-        expect(await usdc.balanceOf(acAcc)).to.equal(_A(30));
-      }
+      // Setup - send some initial money
+      await usdc.connect(exec1).transfer(acAcc, _A(10));
+      await usdc.connect(exec2).transfer(acAcc, _A(20));
+      expect(await usdc.balanceOf(acAcc)).to.equal(_A(30));
 
       const calls = [
         usdc.interface.encodeFunctionData("transfer", [getAddress(exec1), _A(5)]),
@@ -281,11 +226,10 @@ variants.forEach((variant) => {
       await expect(acAcc.connect(anon).executeBatch([usdc, usdc], [], calls))
         .to.be.revertedWithCustomError(acAcc, "RequiredEntryPointOrExecutor")
         .withArgs(anon);
-      const msgSender = variant.name === "AccessControlAccount" ? acAcc : exec2;
-      await expect(() => acAcc.connect(exec2).executeBatch([usdc, usdc], [], calls)).to.changeTokenBalances(
+      await expect(acAcc.connect(exec2).executeBatch([usdc, usdc], [], calls)).to.changeTokenBalances(
         ethers,
         usdc,
-        [exec1, anon, msgSender],
+        [exec1, anon, acAcc],
         [_A(5), _A(10), _A(-15)]
       );
     });
@@ -294,13 +238,9 @@ variants.forEach((variant) => {
       const { acAcc, exec1, exec2, ep, ethers } = await loadFixtureOnFork(variant.fixture);
 
       // Setup - send some eth to acAcc and deposit
-      await expect(() => acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ethers, ep, _W(5));
+      await expect(acAcc.addDeposit({ value: _W(5) })).to.changeEtherBalance(ethers, ep, _W(5));
       expect(await ep.balanceOf(acAcc)).to.equal(_W(5));
-      await expect(() => exec1.sendTransaction({ to: acAcc, value: _W(3) })).to.changeEtherBalance(
-        ethers,
-        acAcc,
-        _W(3)
-      );
+      await expect(exec1.sendTransaction({ to: acAcc, value: _W(3) })).to.changeEtherBalance(ethers, acAcc, _W(3));
 
       const calls = [
         ep.interface.encodeFunctionData("depositTo", [getAddress(exec2)]),
@@ -322,7 +262,7 @@ variants.forEach((variant) => {
         "WrongArrayLength"
       );
       if (variant.name == "AccessControlAccount") {
-        await expect(() => acAcc.connect(exec1).executeBatch([ep, ep], [_W(1), _W(2)], calls)).to.changeEtherBalance(
+        await expect(acAcc.connect(exec1).executeBatch([ep, ep], [_W(1), _W(2)], calls)).to.changeEtherBalance(
           ethers,
           ep,
           _W(3)
@@ -341,12 +281,10 @@ variants.forEach((variant) => {
     it("Can executeBatch when called through entryPoint", async () => {
       const { acAcc, anon, exec1, exec2, usdc, ep, ethers } = await loadFixtureOnFork(variant.fixture);
 
-      if (variant.name === "AccessControlAccount") {
-        // Setup - send some initial money
-        await usdc.connect(exec1).transfer(acAcc, _A(10));
-        await usdc.connect(exec2).transfer(acAcc, _A(20));
-        expect(await usdc.balanceOf(acAcc)).to.equal(_A(30));
-      }
+      // Setup - send some initial money
+      await usdc.connect(exec1).transfer(acAcc, _A(10));
+      await usdc.connect(exec2).transfer(acAcc, _A(20));
+      expect(await usdc.balanceOf(acAcc)).to.equal(_A(30));
 
       const calls = [
         usdc.interface.encodeFunctionData("transfer", [getAddress(exec1), _A(5)]),
@@ -358,7 +296,7 @@ variants.forEach((variant) => {
         calls,
       ]);
 
-      await expect(() => acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
+      await expect(acAcc.addDeposit({ value: _W(9) })).to.changeEtherBalance(ethers, ep, _W(9));
       expect(await ep.balanceOf(acAcc)).to.equal(_W(9));
 
       const nonce = await acAcc.getNonce();
@@ -390,11 +328,10 @@ variants.forEach((variant) => {
         .to.be.revertedWithCustomError(ep, "FailedOp")
         .withArgs(0, "AA24 signature error");
 
-      const msgSender = variant.name === "AccessControlAccount" ? acAcc : exec2;
-      await expect(() => ep.handleOps([[...userOp, signature]], anon)).to.changeTokenBalances(
+      await expect(ep.handleOps([[...userOp, signature]], anon)).to.changeTokenBalances(
         ethers,
         usdc,
-        [exec1, anon, msgSender],
+        [exec1, anon, acAcc],
         [_A(5), _A(10), _A(-15)]
       );
     });
