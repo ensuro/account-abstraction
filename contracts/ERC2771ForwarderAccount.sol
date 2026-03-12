@@ -45,7 +45,7 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     }
   }
 
-  event ExecutorAdded(address indexed executor, ERC2771Context target);
+  event ExecutorAdded(address indexed executor, ERC2771Context indexed target);
   event ExecutorRemoved(address indexed executor);
 
   error RequiredEntryPointOrExecutor(address sender);
