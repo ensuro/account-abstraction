@@ -84,25 +84,23 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
 
   /**
    * @dev Validates that the user operation is well formed and that the destination is correct. Does not validate signature.
-   * @return dest The target contract to forward the call to
-   * @return value The amount of ETH to forward with the call
-   * @return func The calldata to forward to the target contract (without the appended signer)
+   * @return call A Call struct containing the call to be made
    */
   function _validateAndDecodeCall(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
-  ) internal pure returns (ERC2771Context dest, uint256 value, bytes memory func) {
+  ) internal pure returns (Call memory call) {
     require(userOp.callData.length >= 56 && bytes4(userOp.callData[0:4]) == this.executeUserOp.selector, InvalidCall());
-    (dest, value, func) = abi.decode(userOp.callData[4:], (ERC2771Context, uint256, bytes));
-    if (dest == ERC2771Context(address(0))) {
+    (call.target, call.value, call.data) = abi.decode(userOp.callData[4:], (address, uint256, bytes));
+    if (call.target == address(0)) {
       // This is an if and not a require to avoid evaluating the _getSigner call in the happy path
-      revert InvalidTarget(dest, _getSigner(userOp, userOpHash));
+      revert InvalidTarget(ERC2771Context(call.target), _getSigner(userOp, userOpHash));
     }
   }
 
-  function _isAuthorized(address signer, ERC2771Context target) internal view returns (bool) {
+  function _isAuthorized(address signer, address target) internal view returns (bool) {
     ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
-    return $.targets[signer] == target;
+    return $.targets[signer] == ERC2771Context(target);
   }
 
   /**
@@ -131,9 +129,9 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal virtual override returns (uint256 validationData) {
-    (ERC2771Context dest, , ) = _validateAndDecodeCall(userOp, userOpHash);
+    Call memory call = _validateAndDecodeCall(userOp, userOpHash);
     address signer = _getSigner(userOp, userOpHash);
-    if (!_isAuthorized(signer, dest)) {
+    if (!_isAuthorized(signer, call.target)) {
       return SIG_VALIDATION_FAILED;
     }
     return SIG_VALIDATION_SUCCESS;
@@ -151,12 +149,12 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
    * @param userOpHash The hash of the user operation, used for signature verification.
    */
   function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external override {
-    (ERC2771Context dest, uint256 value, bytes memory func) = _validateAndDecodeCall(userOp, userOpHash);
+    Call memory call = _validateAndDecodeCall(userOp, userOpHash);
     address signer = _getSigner(userOp, userOpHash);
 
-    require(_isAuthorized(signer, dest), InvalidTarget(dest, signer));
+    require(_isAuthorized(signer, call.target), InvalidTarget(ERC2771Context(call.target), signer));
 
-    Address.functionCallWithValue(address(dest), abi.encodePacked(func, signer), value);
+    Address.functionCallWithValue(call.target, abi.encodePacked(call.data, signer), call.value);
   }
 
   /**
