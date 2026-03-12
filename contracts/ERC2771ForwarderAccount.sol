@@ -82,6 +82,12 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     return ECDSA.recover(hash, userop.signature);
   }
 
+  /**
+   * @dev Validates that the user operation is well formed and that the destination is correct. Does not validate signature.
+   * @return dest The target contract to forward the call to
+   * @return value The amount of ETH to forward with the call
+   * @return func The calldata to forward to the target contract (without the appended signer)
+   */
   function _validateAndDecodeCall(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
@@ -135,6 +141,7 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
 
   /**
    * @dev Executes a user operation by forwarding the call to the target contract with the signer as the msgSender.
+   *      It re-validates the signature and checks that the signer is authorized. Reverts with InvalidTarget if it isn't.
    *      The calldata is expected to contain this function's selector followed by an ABI-encoded Call:
    *         - dest (address): the target contract address (must be the same as _target)
    *         - value (uint256): the amount of ETH to send with the call
