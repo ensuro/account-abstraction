@@ -77,9 +77,6 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     revert OnlyExecuteUserOpAllowed();
   }
 
-  /**
-   * @dev extracts the signer from the userop call data
-   */
   function _getSigner(PackedUserOperation calldata userop, bytes32 userOpHash) internal pure returns (address) {
     bytes32 hash = MessageHashUtils.toEthSignedMessageHash(userOpHash);
     return ECDSA.recover(hash, userop.signature);
