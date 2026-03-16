@@ -280,7 +280,12 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     const validationData = await account.connect(epSigner).validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
     await expect(validationData).to.equal(1);
 
-    // Calling executeUserOp directly does not validate the signature, usdc sees exec2 as sender
+    // Calling executeUserOp directly is not allowed
+    await expect(account.connect(exec1).executeUserOp(packedUserOp, userOpHash)).to.be.revertedWith(
+      "account: not from EntryPoint"
+    );
+
+    // A malicious entrypoint could do that though, in that case usdc sees exec2 as sender
     await expect(account.connect(epSigner).executeUserOp(packedUserOp, userOpHash))
       .to.emit(usdc, "Transfer")
       .withArgs(getAddress(exec2), getAddress(anon), _A(10));
