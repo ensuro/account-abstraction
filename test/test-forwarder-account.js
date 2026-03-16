@@ -246,10 +246,6 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep, epSigner } =
       await loadFixtureOnFork(setup);
 
-    // Account 'exec2' has granted infinite allowance to 'exec1' on 'usdc'
-    await usdc.connect(exec2).approve(getAddress(exec1), MaxUint256);
-    expect(await usdc.allowance(exec2, exec1)).to.equal(MaxUint256);
-
     // UserOp call signed by 'exec1', forwards exec2 as sender
     const transferCall = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(10)]);
 
@@ -257,7 +253,7 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
       account.interface.getFunction("executeUserOp").selector,
       ethers.AbiCoder.defaultAbiCoder().encode(
         ["address", "address", "uint256", "bytes"],
-        // wrongly set the expected signer as exec2 instead of exec1
+        // wrongly set the expectedSigner as exec2 instead of exec1
         [getAddress(exec2), usdc.target, 0, transferCall]
       ),
     ]);
@@ -284,7 +280,7 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     const validationData = await account.connect(epSigner).validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
     await expect(validationData).to.equal(1);
 
-    // Calling executeUserOp directly does not validate signature, usdc sees exec2 as sender
+    // Calling executeUserOp directly does not validate the signature, usdc sees exec2 as sender
     await expect(account.connect(epSigner).executeUserOp(packedUserOp, userOpHash))
       .to.emit(usdc, "Transfer")
       .withArgs(getAddress(exec2), getAddress(anon), _A(10));

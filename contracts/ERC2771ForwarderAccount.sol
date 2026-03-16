@@ -143,7 +143,7 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
 
   /**
    * @dev Executes a user operation by forwarding the call to the target contract with the signer as the msgSender.
-   *      The calldata is expected to contain this function's selector followed the signer and the ABI-encoded call:
+   *      The calldata is expected to contain this function's selector followed by the signer and the ABI-encoded call:
    *         - signer (address): the signer of the userop, must match the signature
    *         - dest (address): the target contract address (must be the same as _target)
    *         - value (uint256): the amount of ETH to send with the call
