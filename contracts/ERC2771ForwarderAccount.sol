@@ -84,23 +84,27 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
 
   /**
    * @dev Validates that the user operation is well formed and that the destination is correct. Does not validate signature.
+   * @return expectedSigner The address included in the call data, expected to be the signer of the userOp
    * @return call A Call struct containing the call to be made
    */
   function _validateAndDecodeCall(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
-  ) internal pure returns (Call memory call) {
-    require(userOp.callData.length >= 56 && bytes4(userOp.callData[0:4]) == this.executeUserOp.selector, InvalidCall());
-    (call.target, call.value, call.data) = abi.decode(userOp.callData[4:], (address, uint256, bytes));
+  ) internal pure returns (address expectedSigner, Call memory call) {
+    require(userOp.callData.length >= 80 && bytes4(userOp.callData[0:4]) == this.executeUserOp.selector, InvalidCall());
+    (expectedSigner, call.target, call.value, call.data) = abi.decode(
+      userOp.callData[4:],
+      (address, address, uint256, bytes)
+    );
     if (call.target == address(0)) {
       // This is an if and not a require to avoid evaluating the _getSigner call in the happy path
       revert InvalidTarget(ERC2771Context(call.target), _getSigner(userOp, userOpHash));
     }
   }
 
-  function _isAuthorized(address signer, address target) internal view returns (bool) {
+  function _isAuthorized(address signer, address expectedSigner, address target) internal view returns (bool) {
     ERC2771ForwarderAccountStorage storage $ = _getAccountStorage();
-    return $.targets[signer] == ERC2771Context(target);
+    return signer == expectedSigner && $.targets[signer] == ERC2771Context(target);
   }
 
   /**
@@ -129,9 +133,9 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal virtual override returns (uint256 validationData) {
-    Call memory call = _validateAndDecodeCall(userOp, userOpHash);
+    (address expectedSigner, Call memory call) = _validateAndDecodeCall(userOp, userOpHash);
     address signer = _getSigner(userOp, userOpHash);
-    if (!_isAuthorized(signer, call.target)) {
+    if (!_isAuthorized(signer, expectedSigner, call.target)) {
       return SIG_VALIDATION_FAILED;
     }
     return SIG_VALIDATION_SUCCESS;
@@ -139,8 +143,8 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
 
   /**
    * @dev Executes a user operation by forwarding the call to the target contract with the signer as the msgSender.
-   *      It re-validates the signature and checks that the signer is authorized. Reverts with InvalidTarget if it isn't.
-   *      The calldata is expected to contain this function's selector followed by an ABI-encoded Call:
+   *      The calldata is expected to contain this function's selector followed by the signer and the ABI-encoded call:
+   *         - signer (address): the signer of the userop, must match the signature
    *         - dest (address): the target contract address (must be the same as _target)
    *         - value (uint256): the amount of ETH to send with the call
    *         - func (bytes): the calldata for the target function
@@ -149,12 +153,12 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
    * @param userOpHash The hash of the user operation, used for signature verification.
    */
   function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external override {
-    Call memory call = _validateAndDecodeCall(userOp, userOpHash);
-    address signer = _getSigner(userOp, userOpHash);
+    _requireFromEntryPoint();
 
-    require(_isAuthorized(signer, call.target), InvalidTarget(ERC2771Context(call.target), signer));
+    // We can trust that expectedSigner is the userop signer because it was checked in validateSignature
+    (address expectedSigner, Call memory call) = _validateAndDecodeCall(userOp, userOpHash);
 
-    Address.functionCallWithValue(call.target, abi.encodePacked(call.data, signer), call.value);
+    Address.functionCallWithValue(call.target, abi.encodePacked(call.data, expectedSigner), call.value);
   }
 
   /**
