@@ -26,6 +26,8 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
  * @author Ensuro
  */
 contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecute {
+  // 132 = 4 (method bytes4) + 32 (expectedSigner) + 32 (target) + 32 (value) + 32 (calldata offset)
+  uint256 private constant MIN_USER_OP_CALLDATA = 132;
   IEntryPoint private immutable _entryPoint;
 
   /// @custom:storage-location erc7201:ensuro.storage.ERC2771ForwarderAccount
@@ -50,8 +52,8 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
 
   error RequiredEntryPointOrExecutor(address sender);
   error InvalidTarget(ERC2771Context target, address signer);
-  error OnlyExecuteUserOpAllowed();
   error InvalidCall();
+  error MethodNotSupported(bytes4 selector);
 
   constructor(IEntryPoint anEntryPoint) {
     _entryPoint = anEntryPoint;
@@ -70,11 +72,11 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
   receive() external payable {}
 
   function executeBatch(Call[] calldata) external virtual override {
-    revert OnlyExecuteUserOpAllowed();
+    revert InvalidCall();
   }
 
-  function execute(address, uint256, bytes calldata) external virtual override {
-    revert OnlyExecuteUserOpAllowed();
+  function execute(address dest, uint256 value, bytes calldata func) external virtual override {
+    revert InvalidCall();
   }
 
   function _getSigner(PackedUserOperation calldata userop, bytes32 userOpHash) internal pure returns (address) {
@@ -86,18 +88,22 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
    * @dev Validates that the user operation is well formed and that the destination is correct. Does not validate signature.
    * @return expectedSigner The address included in the call data, expected to be the signer of the userOp
    * @return call A Call struct containing the call to be made
+   * @return selector The selector used (execute or executeUserOp)
    */
   function _validateAndDecodeCall(
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
-  ) internal pure returns (address expectedSigner, Call memory call) {
-    require(userOp.callData.length >= 80 && bytes4(userOp.callData[0:4]) == this.executeUserOp.selector, InvalidCall());
+  ) internal pure returns (address expectedSigner, Call memory call, bytes4 selector) {
+    if (userOp.callData.length < MIN_USER_OP_CALLDATA) revert InvalidCall();
+    selector = bytes4(userOp.callData[0:4]);
+    if (selector != this.executeUserOp.selector && selector != this.erc2771Forward.selector) {
+      revert MethodNotSupported(selector);
+    }
     (expectedSigner, call.target, call.value, call.data) = abi.decode(
       userOp.callData[4:],
       (address, address, uint256, bytes)
     );
     if (call.target == address(0)) {
-      // This is an if and not a require to avoid evaluating the _getSigner call in the happy path
       revert InvalidTarget(ERC2771Context(call.target), _getSigner(userOp, userOpHash));
     }
   }
@@ -133,7 +139,7 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal virtual override returns (uint256 validationData) {
-    (address expectedSigner, Call memory call) = _validateAndDecodeCall(userOp, userOpHash);
+    (address expectedSigner, Call memory call, ) = _validateAndDecodeCall(userOp, userOpHash);
     address signer = _getSigner(userOp, userOpHash);
     if (!_isAuthorized(signer, expectedSigner, call.target)) {
       return SIG_VALIDATION_FAILED;
@@ -155,10 +161,25 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
   function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external override {
     _requireFromEntryPoint();
 
-    // We can trust that expectedSigner is the userop signer because it was checked in validateSignature
-    (address expectedSigner, Call memory call) = _validateAndDecodeCall(userOp, userOpHash);
+    (address expectedSigner, Call memory call, ) = _validateAndDecodeCall(userOp, userOpHash);
 
     Address.functionCallWithValue(call.target, abi.encodePacked(call.data, expectedSigner), call.value);
+  }
+
+  /**
+   * @notice Forwards a call to the target contract with `caller` as the msgSender.
+   * @dev Since this method is called from the entryPoint, the method _validateSignature was passed before,
+   *      validating the signer of the userOp is equal to `caller` and `caller` is authorized to call `target`.
+   *
+   * @param caller The real caller of the operation that will be appended to the call, and decoded by the target
+   *               contract as _msgSender()
+   * @param target The target contract to be called
+   * @param value The amount of ETH to send with the call
+   * @param func The calldata for the target function
+   */
+  function erc2771Forward(address caller, address target, uint256 value, bytes calldata func) external virtual {
+    _requireFromEntryPoint();
+    Address.functionCallWithValue(target, abi.encodePacked(func, caller), value);
   }
 
   /**

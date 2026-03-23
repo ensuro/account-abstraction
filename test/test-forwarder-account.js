@@ -120,17 +120,61 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
     );
   });
 
+  it("erc2771Forward works the same as executeUserOp", async () => {
+    const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep, epSigner } =
+      await loadFixtureOnFork(setup);
+
+    const transferCall = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(5)]);
+
+    const erc2771ForwardData = ethers.concat([
+      account.interface.getFunction("erc2771Forward").selector,
+      ethers.AbiCoder.defaultAbiCoder().encode(
+        ["address", "address", "uint256", "bytes"],
+        [getAddress(exec1), usdc.target, 0, transferCall]
+      ),
+    ]);
+
+    const nonce = await account.getNonce();
+    const { chainId } = await ethers.provider.getNetwork();
+    const userOp = await signUserOp(
+      fillUserOpDefaults(
+        {
+          sender: getAddress(account),
+          nonce: nonce,
+          callData: erc2771ForwardData,
+        },
+        TestUserOp
+      ),
+      exec1,
+      ADDRESSES.ENTRYPOINT,
+      chainId
+    );
+    const packedUserOp = packedUserOpAsArray(packUserOp(userOp), true);
+    const userOpHash = getUserOpHash(userOp, ADDRESSES.ENTRYPOINT, chainId);
+
+    const validationData = await account.connect(epSigner).validateUserOp.staticCall(packedUserOp, userOpHash, 0n);
+    await expect(validationData).to.equal(0);
+
+    const tx = await ep.handleOps([packedUserOp], anon, { gasLimit: 1000000n });
+
+    await expect(tx)
+      .to.emit(ep, "UserOperationEvent")
+      .withArgs(userOpHash, getAddress(account), anyValue, anyValue, true, anyValue, anyValue);
+
+    await expect(tx).to.changeTokenBalances(ethers, usdc, [exec1, anon], [_A(-5), _A(5)]);
+  });
+
   it("Does not allow execute or executeBatch", async () => {
     const { account, anon, exec1, exec2, admin, roles, usdc, ethers, helpers, ep, epSigner } =
       await loadFixtureOnFork(setup);
 
     await expect(account.connect(anon).execute(getAddress(usdc), 0, "0x")).to.be.revertedWithCustomError(
       account,
-      "OnlyExecuteUserOpAllowed"
+      "InvalidCall"
     );
     await expect(
       account.connect(anon).executeBatch([{ target: getAddress(usdc), value: 0, data: "0x" }])
-    ).to.be.revertedWithCustomError(account, "OnlyExecuteUserOpAllowed");
+    ).to.be.revertedWithCustomError(account, "InvalidCall");
   });
 
   it("Allows deposit and withdraw into the EntryPoint", async () => {
