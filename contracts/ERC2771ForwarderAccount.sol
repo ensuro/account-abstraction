@@ -75,7 +75,7 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     revert InvalidCall();
   }
 
-  function execute(address dest, uint256 value, bytes calldata func) external virtual override {
+  function execute(address, uint256, bytes calldata) external virtual override {
     revert InvalidCall();
   }
 
