@@ -134,6 +134,15 @@ describe(`ERC2771ForwarderAccount specific tests`, function () {
       ),
     ]);
 
+    // The call to erc2771Forward can be made more easily, without encoding black magic
+    const erc2771ForwardDataSimple = account.interface.encodeFunctionData("erc2771Forward", [
+      getAddress(exec1),
+      usdc.target,
+      0,
+      transferCall,
+    ]);
+    expect(erc2771ForwardData).to.equal(erc2771ForwardDataSimple);
+
     const nonce = await account.getNonce();
     const { chainId } = await ethers.provider.getNetwork();
     const userOp = await signUserOp(

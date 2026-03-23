@@ -94,7 +94,7 @@ contract ERC2771ForwarderAccount is UUPSUpgradeable, BaseAccount, IAccountExecut
     PackedUserOperation calldata userOp,
     bytes32 userOpHash
   ) internal pure returns (address expectedSigner, Call memory call, bytes4 selector) {
-    if (userOp.callData.length < MIN_USER_OP_CALLDATA) revert InvalidCall();
+    require(userOp.callData.length >= MIN_USER_OP_CALLDATA, InvalidCall());
     selector = bytes4(userOp.callData[0:4]);
     if (selector != this.executeUserOp.selector && selector != this.erc2771Forward.selector) {
       revert MethodNotSupported(selector);
