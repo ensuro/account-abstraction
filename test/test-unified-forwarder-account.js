@@ -5,7 +5,7 @@ import { expect } from "chai";
 import { id, MaxUint256, ZeroAddress } from "ethers";
 
 import { getUserOpHash, packUserOp, packedUserOpAsArray, signUserOp, fillUserOpDefaults } from "../js/userOp.js";
-import { loadFixtureOnFork, TestUserOp } from "./utils.js";
+import { loadFixtureLocal, TestUserOp } from "./utils.js";
 
 const _A = amountFunction(6);
 
@@ -100,7 +100,7 @@ async function setupProbeTarget(connection) {
 
 describe("UnifiedForwarderAccount contract tests", function () {
   it("Constructs with the right target, signers and nonces", async () => {
-    const { account, usdc, signer1, signer2, anon } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, signer2, anon } = await loadFixtureLocal(setup);
     expect(await account.erc2771Target()).to.equal(getAddress(usdc));
     expect(await account.authorizedSigner(signer1)).to.equal(true);
     expect(await account.authorizedSigner(signer2)).to.equal(true);
@@ -109,7 +109,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Forwards the recovered signer as ERC-2771 sender", async () => {
-    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
 
     // signer2 lets signer1 move its tokens; signer1 then drives the transferFrom through the account
     await usdc.connect(signer2).approve(getAddress(signer1), MaxUint256);
@@ -130,7 +130,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Accepts both the execute and executeUserOp tags, rejects any other", async () => {
-    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
     const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
 
     for (const [i, selector] of [EXECUTE_SELECTOR, EXECUTE_USER_OP_SELECTOR].entries()) {
@@ -162,7 +162,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Appends exactly the recovered signer when calling the ERC-2771 target", async () => {
-    const { account, targetProbe, signer1, beneficiary, ethers, chainId } = await loadFixtureOnFork(setupProbeTarget);
+    const { account, targetProbe, signer1, beneficiary, ethers, chainId } = await loadFixtureLocal(setupProbeTarget);
     expect(await account.erc2771Target()).to.equal(getAddress(targetProbe));
 
     const data = targetProbe.interface.encodeFunctionData("ping", []);
@@ -182,7 +182,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
 
   it("Cannot impersonate another account by forging a trailing sender", async () => {
     const { account, targetProbe, signer1, anon, beneficiary, ethers, chainId } =
-      await loadFixtureOnFork(setupProbeTarget);
+      await loadFixtureLocal(setupProbeTarget);
 
     // Attacker appends a fake sender to data; the account still appends the recovered signer last,
     // so _msgSender() is signer1, not anon (calldata = selector + forged sender + real signer).
@@ -201,7 +201,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Plain path forwards data and value unchanged, without appending a sender", async () => {
-    const { account, plainProbe, signer1, deployer, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, plainProbe, signer1, deployer, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
     await deployer.sendTransaction({ to: account, value: _W(1) });
 
     const data = plainProbe.interface.encodeFunctionData("ping", []);
@@ -223,7 +223,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Rejects a userOp whose recovered signer != decoded signer", async () => {
-    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
 
     const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
     // signed by signer1 but the decoded signer claims signer2 (an authorized signer)
@@ -241,7 +241,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Rejects a userOp signed by an unauthorized signer", async () => {
-    const { account, usdc, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
 
     const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
     const { packed } = await makeOp(ethers, account, anon, { target: usdc, value: 0, data, nonce: 0 }, chainId);
@@ -252,7 +252,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Rejects an out-of-order nonce and replays", async () => {
-    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
     const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
 
     const wrong = await makeOp(ethers, account, signer1, { target: usdc, value: 0, data, nonce: 5 }, chainId);
@@ -276,7 +276,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Does not revert the bundle when one op fails, and reports it via events", async () => {
-    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
 
     const ok0 = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(10)]);
     const fail = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1000)]); // exceeds balance
@@ -308,7 +308,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Caps execution gas per op so a heavy op can't starve the bundle", async () => {
-    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, signer2, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
 
     const cold = ethers.Wallet.createRandom().address; // fresh recipient → cold SSTORE on transfer
     const d0 = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(10)]);
@@ -345,7 +345,7 @@ describe("UnifiedForwarderAccount contract tests", function () {
   });
 
   it("Tracks nonce sequences per key independently", async () => {
-    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureOnFork(setup);
+    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
     const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
 
     const nonce = 7n << NONCE_SEQ_BITS; // key 7, seq 0
