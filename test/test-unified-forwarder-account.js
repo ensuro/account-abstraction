@@ -33,7 +33,7 @@ async function makeOp(
   ethers,
   account,
   signerWallet,
-  { signerField, target, value, data, nonce, callGasLimit, selector },
+  { signerField, sender, target, value, data, nonce, callGasLimit, selector },
   chainId
 ) {
   const callData = buildCallData(
@@ -45,7 +45,7 @@ async function makeOp(
     selector
   );
   const op = await signUserOp(
-    fillUserOpDefaults({ sender: getAddress(account), nonce, callData, callGasLimit }, TestUserOp),
+    fillUserOpDefaults({ sender: sender ?? getAddress(account), nonce, callData, callGasLimit }, TestUserOp),
     signerWallet,
     getAddress(account),
     chainId
@@ -58,15 +58,18 @@ async function makeOp(
 
 // erc2771Target is fixed at construction but the ERC2771 token needs the account as its trusted
 // forwarder, so we predict the token address (deployed right after the account by the same signer).
+// The AccessManager (signer add/remove authority) is deployed by `admin` so the deployer's nonce
+// sequence — and the CREATE address prediction below — stays unchanged.
 async function setup(connection) {
   const { ethers } = connection;
-  const [deployer, signer1, signer2, anon, beneficiary] = await ethers.getSigners();
+  const [deployer, signer1, signer2, anon, beneficiary, admin] = await ethers.getSigners();
 
+  const am = await (await ethers.getContractFactory("MockAccessManager")).connect(admin).deploy(admin.address);
   const UnifiedForwarderAccount = await ethers.getContractFactory("UnifiedForwarderAccount");
   const startNonce = await deployer.getNonce();
   const predictedToken = ethers.getCreateAddress({ from: deployer.address, nonce: startNonce + 1 });
 
-  const account = await UnifiedForwarderAccount.deploy(predictedToken, [signer1, signer2]);
+  const account = await UnifiedForwarderAccount.deploy(getAddress(am), predictedToken, [signer1, signer2]);
   const usdc = await initCurrency(
     ethers,
     { decimals: 6, initial_supply: _A(10000), extraArgs: [getAddress(account)], contractClass: "ERC20With2771" },
@@ -77,35 +80,95 @@ async function setup(connection) {
   const plainProbe = await (await ethers.getContractFactory("ERC2771Probe")).deploy(ZeroAddress);
   const { chainId } = await ethers.provider.getNetwork();
 
-  return { account, usdc, plainProbe, deployer, signer1, signer2, anon, beneficiary, ethers, chainId };
+  return { account, usdc, plainProbe, am, deployer, signer1, signer2, anon, beneficiary, admin, ethers, chainId };
 }
 
 // Variant whose erc2771Target is an ERC2771Probe (trusting the account), to assert the appended
 // bytes precisely.
 async function setupProbeTarget(connection) {
   const { ethers } = connection;
-  const [deployer, signer1, signer2, anon, beneficiary] = await ethers.getSigners();
+  const [deployer, signer1, signer2, anon, beneficiary, admin] = await ethers.getSigners();
 
+  const am = await (await ethers.getContractFactory("MockAccessManager")).connect(admin).deploy(admin.address);
   const UnifiedForwarderAccount = await ethers.getContractFactory("UnifiedForwarderAccount");
   const ERC2771Probe = await ethers.getContractFactory("ERC2771Probe");
   const startNonce = await deployer.getNonce();
   const predictedProbe = ethers.getCreateAddress({ from: deployer.address, nonce: startNonce + 1 });
 
-  const account = await UnifiedForwarderAccount.deploy(predictedProbe, [signer1, signer2]);
+  const account = await UnifiedForwarderAccount.deploy(getAddress(am), predictedProbe, [signer1, signer2]);
   const targetProbe = await ERC2771Probe.deploy(getAddress(account));
   const { chainId } = await ethers.provider.getNetwork();
 
-  return { account, targetProbe, signer1, signer2, anon, beneficiary, ethers, chainId };
+  return { account, targetProbe, am, signer1, signer2, anon, beneficiary, admin, ethers, chainId };
 }
 
 describe("UnifiedForwarderAccount contract tests", function () {
-  it("Constructs with the right target, signers and nonces", async () => {
-    const { account, usdc, signer1, signer2, anon } = await loadFixtureLocal(setup);
+  it("Constructs with the right target, authority, signers and nonces", async () => {
+    const { account, usdc, am, signer1, signer2, anon } = await loadFixtureLocal(setup);
     expect(await account.erc2771Target()).to.equal(getAddress(usdc));
+    expect(await account.authority()).to.equal(getAddress(am));
     expect(await account.authorizedSigner(signer1)).to.equal(true);
     expect(await account.authorizedSigner(signer2)).to.equal(true);
     expect(await account.authorizedSigner(anon)).to.equal(false);
     expect(await account.getNonce(0)).to.equal(0);
+  });
+
+  it("Rejects construction with a zero target or a zero signer", async () => {
+    const { account, am, signer1, ethers } = await loadFixtureLocal(setup);
+    const UnifiedForwarderAccount = await ethers.getContractFactory("UnifiedForwarderAccount");
+    await expect(
+      UnifiedForwarderAccount.deploy(getAddress(am), ZeroAddress, [getAddress(signer1)])
+    ).to.be.revertedWithCustomError(account, "ZeroAddress");
+    await expect(
+      UnifiedForwarderAccount.deploy(getAddress(am), getAddress(account), [getAddress(signer1), ZeroAddress])
+    ).to.be.revertedWithCustomError(account, "ZeroAddress");
+  });
+
+  it("Lets the access manager add and remove authorized signers", async () => {
+    const { account, usdc, signer1, signer2, anon, admin, beneficiary, ethers, chainId } =
+      await loadFixtureLocal(setup);
+    const toS2 = usdc.interface.encodeFunctionData("transfer", [getAddress(signer2), _A(1)]);
+
+    // anon is unauthorized: its op is rejected
+    expect(await account.authorizedSigner(anon)).to.equal(false);
+    const rejected = await makeOp(ethers, account, anon, { target: usdc, value: 0, data: toS2, nonce: 0 }, chainId);
+    await expect(account.handleOps([rejected.packed], getAddress(beneficiary)))
+      .to.be.revertedWithCustomError(account, "UnauthorizedSigner")
+      .withArgs(getAddress(anon));
+
+    // admin authorizes anon, funds it, and now its op goes through
+    await expect(account.connect(admin).setAuthorizedSigner(getAddress(anon), true))
+      .to.emit(account, "AuthorizedSignerSet")
+      .withArgs(getAddress(anon), true);
+    expect(await account.authorizedSigner(anon)).to.equal(true);
+    await usdc.connect(signer1).transfer(getAddress(anon), _A(2));
+
+    const fromAnon = usdc.interface.encodeFunctionData("transfer", [getAddress(signer2), _A(1)]);
+    const okOp = await makeOp(ethers, account, anon, { target: usdc, value: 0, data: fromAnon, nonce: 0 }, chainId);
+    await expect(account.handleOps([okOp.packed], getAddress(beneficiary))).to.changeTokenBalances(
+      ethers,
+      usdc,
+      [anon, signer2],
+      [_A(-1), _A(1)]
+    );
+
+    // admin revokes signer1: its op is now rejected
+    await account.connect(admin).setAuthorizedSigner(getAddress(signer1), false);
+    const s1op = await makeOp(ethers, account, signer1, { target: usdc, value: 0, data: toS2, nonce: 0 }, chainId);
+    await expect(account.handleOps([s1op.packed], getAddress(beneficiary)))
+      .to.be.revertedWithCustomError(account, "UnauthorizedSigner")
+      .withArgs(getAddress(signer1));
+  });
+
+  it("Rejects signer management from an unauthorized caller and for the zero address", async () => {
+    const { account, anon, admin } = await loadFixtureLocal(setup);
+    await expect(account.connect(anon).setAuthorizedSigner(getAddress(anon), true))
+      .to.be.revertedWithCustomError(account, "AccessManagedUnauthorized")
+      .withArgs(getAddress(anon));
+    await expect(account.connect(admin).setAuthorizedSigner(ZeroAddress, true)).to.be.revertedWithCustomError(
+      account,
+      "ZeroAddress"
+    );
   });
 
   it("Forwards the recovered signer as ERC-2771 sender", async () => {
@@ -220,6 +283,21 @@ describe("UnifiedForwarderAccount contract tests", function () {
     await expect(tx)
       .to.emit(account, "UserOperationEvent")
       .withArgs(hash, getAddress(account), ZeroAddress, 0, true, anyValue, anyValue);
+  });
+
+  it("Rejects a userOp whose sender is not the account", async () => {
+    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
+    const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
+    const { packed } = await makeOp(
+      ethers,
+      account,
+      signer1,
+      { sender: getAddress(anon), target: usdc, value: 0, data, nonce: 0 },
+      chainId
+    );
+    await expect(account.handleOps([packed], getAddress(beneficiary)))
+      .to.be.revertedWithCustomError(account, "InvalidSender")
+      .withArgs(getAddress(anon));
   });
 
   it("Rejects a userOp whose recovered signer != decoded signer", async () => {

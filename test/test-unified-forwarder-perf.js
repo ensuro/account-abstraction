@@ -21,13 +21,14 @@ function buildCallData(ethers, signer, target, value, data) {
 
 async function setup(connection) {
   const { ethers } = connection;
-  const [deployer, signer1, signer2, anon] = await ethers.getSigners();
+  const [deployer, signer1, signer2, anon, admin] = await ethers.getSigners();
 
+  const am = await (await ethers.getContractFactory("MockAccessManager")).connect(admin).deploy(admin.address);
   const UnifiedForwarderAccount = await ethers.getContractFactory("UnifiedForwarderAccount");
   const startNonce = await deployer.getNonce();
   const predictedWorkload = ethers.getCreateAddress({ from: deployer.address, nonce: startNonce + 1 });
 
-  const account = await UnifiedForwarderAccount.deploy(predictedWorkload, [signer1, signer2]);
+  const account = await UnifiedForwarderAccount.deploy(getAddress(am), predictedWorkload, [signer1, signer2]);
   const workload = await (await ethers.getContractFactory("MockWorkload")).deploy(getAddress(account));
   const { chainId } = await ethers.provider.getNetwork();
 

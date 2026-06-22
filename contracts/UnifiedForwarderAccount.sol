@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {AccessManaged} from "@openzeppelin/contracts/access/manager/AccessManaged.sol";
 import {IEntryPoint} from "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 
@@ -18,9 +19,13 @@ interface IExecute {
 ///      The ERC-2771 sender is appended ONLY when calling `erc2771Target` (fixed at
 ///      construction). It is never up to the signer, which would let a signer route a call
 ///      to an ERC-2771 target through the plain path with a forged trailing sender and
-///      impersonate any account. Invariant: `erc2771Target` is the only ERC-2771 contract
-///      that trusts this account as a forwarder.
-contract UnifiedForwarderAccount {
+///      impersonate any account.
+///
+///      Deployment invariant, assumed but NOT enforced on-chain: `erc2771Target` is the only
+///      ERC-2771 contract that trusts this account as a forwarder. If any other ERC-2771 contract
+///      trusts it, an authorized signer can impersonate arbitrary accounts on that contract via
+///      the plain path. Wiring this up correctly is a deployment responsibility.
+contract UnifiedForwarderAccount is AccessManaged {
   // Accepted callData tags (the 4-byte prefix). The encoded args after the tag are always
   // (signer, target, value, data) regardless of which tag is used.
   bytes4 private constant EXECUTE_SELECTOR = IExecute.execute.selector;
@@ -35,18 +40,34 @@ contract UnifiedForwarderAccount {
   mapping(address signer => bool) public authorizedSigner;
   mapping(uint192 key => uint64 sequence) private _nonceSeq;
 
+  event AuthorizedSignerSet(address indexed signer, bool authorized);
+
   error UnauthorizedSigner(address signer);
   error InvalidSignature(address recovered, address expected);
   error InvalidNonce(uint192 key, uint64 expected, uint64 actual);
   error UnsupportedSelector(bytes4 selector);
+  error InvalidSender(address sender);
+  error ZeroAddress();
 
-  constructor(address erc2771Target_, address[] memory signers) {
+  constructor(address authority, address erc2771Target_, address[] memory signers) AccessManaged(authority) {
+    require(erc2771Target_ != address(0), ZeroAddress());
     erc2771Target = erc2771Target_;
-    for (uint256 i = 0; i < signers.length; ++i) authorizedSigner[signers[i]] = true;
+    for (uint256 i = 0; i < signers.length; ++i) {
+      require(signers[i] != address(0), ZeroAddress());
+      authorizedSigner[signers[i]] = true;
+    }
   }
 
   // solhint-disable-next-line no-empty-blocks
   receive() external payable {}
+
+  /// @notice Add or remove an authorized signer. Gated by the AccessManager `authority`; the signer
+  ///         set stays in plain storage so `_validate` reads it cheaply.
+  function setAuthorizedSigner(address signer, bool authorized) external restricted {
+    require(signer != address(0), ZeroAddress());
+    authorizedSigner[signer] = authorized;
+    emit AuthorizedSignerSet(signer, authorized);
+  }
 
   function handleOps(PackedUserOperation[] calldata ops, address /* beneficiary */) external {
     bytes32[] memory hashes = new bytes32[](ops.length);
@@ -60,6 +81,7 @@ contract UnifiedForwarderAccount {
   }
 
   function _validate(PackedUserOperation calldata op) private returns (bytes32 userOpHash) {
+    require(op.sender == address(this), InvalidSender(op.sender));
     bytes4 selector = bytes4(op.callData[:SELECTOR_SIZE]);
     require(selector == EXECUTE_SELECTOR || selector == EXECUTE_USER_OP_SELECTOR, UnsupportedSelector(selector));
 
@@ -84,6 +106,12 @@ contract UnifiedForwarderAccount {
   /// @dev A failing op does not revert the bundle: earlier ops are already paid for, so we just
   ///      report it via the canonical events and move on. The call is bounded by the op's signed
   ///      `callGasLimit` so a looping/heavy op can't starve the rest of the bundle.
+  ///
+  ///      This isolation only covers reverts INSIDE the forwarded call. `_validate` checks just the
+  ///      signer word, so an op with a valid signature but malformed callData (a bogus tuple that
+  ///      makes `_decode` below revert) reverts the whole bundle. Producers are trusted to build
+  ///      well-formed callData, so this is accepted rather than guarded: an up-front full decode
+  ///      isn't justified for this self-bundled, trusted-signer setup.
   function _execute(PackedUserOperation calldata op, bytes32 userOpHash) private {
     (address signer, address target, uint256 value, bytes memory data) = _decode(op.callData);
     bytes memory payload = target == erc2771Target ? abi.encodePacked(data, signer) : data;
@@ -93,6 +121,8 @@ contract UnifiedForwarderAccount {
     // solhint-disable-next-line avoid-low-level-calls
     (bool success, bytes memory ret) = target.call{gas: callGasLimit, value: value}(payload);
     if (!success && ret.length > 0) emit IEntryPoint.UserOperationRevertReason(userOpHash, op.sender, op.nonce, ret);
+    // paymaster is address(0) (none) and actualGasCost/actualGasUsed are 0: this self-bundled account
+    // does no on-chain gas accounting or reimbursement (the caller pays the tx directly).
     emit IEntryPoint.UserOperationEvent(userOpHash, op.sender, address(0), op.nonce, success, 0, 0);
   }
 
