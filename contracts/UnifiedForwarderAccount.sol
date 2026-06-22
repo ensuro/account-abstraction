@@ -6,6 +6,13 @@ import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/Messa
 import {IEntryPoint} from "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
 
+/// @dev Only used to derive the accepted callData tag selectors by name+type (see EXECUTE_SELECTOR).
+interface IExecute {
+  function execute(address target, uint256 value, bytes calldata data) external;
+
+  function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external;
+}
+
 /// @notice ERC-4337 forwarder account + entrypoint merged into one contract.
 /// @dev handleOps validates (signature, authorized signer, nonce) and forwards, internally.
 ///      The ERC-2771 sender is appended ONLY when calling `erc2771Target` (fixed at
@@ -16,9 +23,8 @@ import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/Pac
 contract UnifiedForwarderAccount {
   // Accepted callData tags (the 4-byte prefix). The encoded args after the tag are always
   // (signer, target, value, data) regardless of which tag is used.
-  bytes4 private constant EXECUTE_SELECTOR = bytes4(keccak256("execute(address,uint256,bytes)"));
-  bytes4 private constant EXECUTE_USER_OP_SELECTOR =
-    bytes4(keccak256("executeUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)"));
+  bytes4 private constant EXECUTE_SELECTOR = IExecute.execute.selector;
+  bytes4 private constant EXECUTE_USER_OP_SELECTOR = IExecute.executeUserOp.selector;
 
   uint256 private constant SELECTOR_SIZE = 4; // 4-byte callData tag
   uint256 private constant WORD_SIZE = 32; // ABI head word
