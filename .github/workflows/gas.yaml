@@ -1,0 +1,63 @@
+name: Gas & Size
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  gas:
+    name: Gas & Size
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+
+      - name: Contract sizes
+        run: npx hardhat contract-size list 2>&1 | tee size-output.txt
+      - name: Build contract-size comment
+        run: |
+          {
+            echo "## Contract sizes"
+            echo '```'
+            grep -E '^[[:space:]]*[|·]' size-output.txt
+            echo '```'
+          } > size-comment.md
+      - name: Post contract-size sticky comment
+        uses: marocchino/sticky-pull-request-comment@v2.9.2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: contract-size
+          path: size-comment.md
+
+      - name: Run tests with gas stats
+        run: |
+          set -o pipefail
+          npx hardhat test --gas-stats 2>&1 | tee gas-output.txt
+        env:
+          ALCHEMY_URL: ${{ secrets.ALCHEMY_URL }}
+      - name: Build gas comment
+        run: |
+          {
+            echo "## Gas usage"
+            echo '```'
+            awk '/Gas Usage Statistics/{f=1} f' gas-output.txt
+            echo '```'
+          } > gas-comment.md
+      - name: Post gas sticky comment
+        uses: marocchino/sticky-pull-request-comment@v2.9.2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          header: gas-report
+          path: gas-comment.md
