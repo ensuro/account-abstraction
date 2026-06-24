@@ -192,6 +192,24 @@ describe("UnifiedForwarderAccount contract tests", function () {
     await expect(tx).to.changeTokenBalances(ethers, usdc, [signer2, anon, signer1], [_A(-10), _A(10), _A(0)]);
   });
 
+  it("Exposes getUserOpHash matching the off-chain hash and the emitted userOpHash", async () => {
+    const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
+    const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);
+    const { packed, hash } = await makeOp(
+      ethers,
+      account,
+      signer1,
+      { target: usdc, value: 0, data, nonce: 0 },
+      chainId
+    );
+
+    expect(await account.getUserOpHash(packed)).to.equal(hash);
+
+    await expect(account.handleOps([packed], getAddress(beneficiary)))
+      .to.emit(account, "UserOperationEvent")
+      .withArgs(hash, getAddress(account), ZeroAddress, 0, true, anyValue, anyValue);
+  });
+
   it("Accepts both the execute and executeUserOp tags, rejects any other", async () => {
     const { account, usdc, signer1, anon, beneficiary, ethers, chainId } = await loadFixtureLocal(setup);
     const data = usdc.interface.encodeFunctionData("transfer", [getAddress(anon), _A(1)]);

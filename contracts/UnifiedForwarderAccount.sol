@@ -80,6 +80,14 @@ contract UnifiedForwarderAccount is AccessManaged {
     return (uint256(key) << NONCE_SEQ_BITS) | _nonceSeq[key];
   }
 
+  /// @notice The userOp hash this account signs over and verifies (the same value reported as
+  ///         `userOpHash` in UserOperationEvent). Exposed under the canonical EntryPoint signature
+  ///         for bundler simulation/estimation; it is this account's own hash (see `_userOpHash`),
+  ///         not the v0.8 EIP-712 hash.
+  function getUserOpHash(PackedUserOperation calldata userOp) external view returns (bytes32) {
+    return _userOpHash(userOp);
+  }
+
   function _validate(PackedUserOperation calldata op) private returns (bytes32 userOpHash) {
     require(op.sender == address(this), InvalidSender(op.sender));
     bytes4 selector = bytes4(op.callData[:SELECTOR_SIZE]);
