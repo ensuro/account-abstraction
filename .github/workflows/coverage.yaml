@@ -1,0 +1,58 @@
+name: Coverage
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Grant permissions for the coverage-action to push on the coverage branch and write on the pull request
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npx hardhat test --coverage
+        env:
+          ALCHEMY_URL: ${{ secrets.ALCHEMY_URL }}
+
+      # The coverage-action consumes a Cobertura XML, but Hardhat emits lcov.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Convert lcov to Cobertura
+        run: |
+          pip install lcov_cobertura==2.1.1
+          lcov_cobertura coverage/lcov.info --base-dir . --output coverage/cobertura-coverage.xml
+
+      - name: Produce the coverage report
+        uses: insightsengineering/coverage-action@v2.7.1
+        with:
+          path: coverage/cobertura-coverage.xml
+          # Publish the rendered output as a PR comment.
+          publish: true
+          # Create a coverage diff against the baseline branch.
+          diff: true
+          diff-branch: main
+          # Branch where the baseline reports are stored (created if missing).
+          diff-storage: _xml_coverage_reports
+          # Fail the workflow if coverage drops compared to `main`.
+          fail: true
+          threshold: 0
+          coverage-reduction-failure: true

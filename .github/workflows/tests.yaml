@@ -1,26 +1,31 @@
-name: SmartContract Tests
-on: [push]
+name: Tests
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   tests:
     name: Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
-      - uses: actions/setup-node@v3
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: "npm"
       - run: npm ci
       - run: npx hardhat compile
-      - run: npx hardhat contract-size list
       - run: npm run solhint
-      - run: npx hardhat test --gas-stats
-        env:
-          ALCHEMY_URL: ${{ secrets.ALCHEMY_URL }}
-      - run: npx hardhat test --coverage
+      - run: npx hardhat test
         env:
           ALCHEMY_URL: ${{ secrets.ALCHEMY_URL }}
