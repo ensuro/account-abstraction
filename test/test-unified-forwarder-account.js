@@ -113,6 +113,17 @@ describe("UnifiedForwarderAccount contract tests", function () {
     expect(await account.getNonce(0)).to.equal(0);
   });
 
+  it("Emits AuthorizedSignerSet events in constructor for each signer", async () => {
+    const { am, signer1, signer2, deployer, ethers } = await loadFixtureLocal(setup);
+    const UnifiedForwarderAccount = await ethers.getContractFactory("UnifiedForwarderAccount");
+    const startNonce = await deployer.getNonce();
+    const dummyTarget = ethers.getCreateAddress({ from: deployer.address, nonce: startNonce + 1 });
+    const account = await UnifiedForwarderAccount.deploy(getAddress(am), dummyTarget, [getAddress(signer1), getAddress(signer2)]);
+    const deployTx = account.deploymentTransaction();
+    await expect(deployTx).to.emit(account, "AuthorizedSignerSet").withArgs(getAddress(signer1), true);
+    await expect(deployTx).to.emit(account, "AuthorizedSignerSet").withArgs(getAddress(signer2), true);
+  });
+
   it("Rejects construction with a zero target or a zero signer", async () => {
     const { account, am, signer1, ethers } = await loadFixtureLocal(setup);
     const UnifiedForwarderAccount = await ethers.getContractFactory("UnifiedForwarderAccount");

@@ -55,6 +55,7 @@ contract UnifiedForwarderAccount is AccessManaged {
     for (uint256 i = 0; i < signers.length; ++i) {
       require(signers[i] != address(0), ZeroAddress());
       authorizedSigner[signers[i]] = true;
+      emit AuthorizedSignerSet(signers[i], true);
     }
   }
 
