@@ -16,7 +16,7 @@ const NONCE_SEQ_BITS = 64n; // 2D nonce: high 192 bits = key, low 64 = sequence
 const selectorOf = (sig) => id(sig).slice(0, 2 + 2 * SELECTOR_SIZE); // "0x" + 2 hex per byte
 
 // 4-byte tags the contract accepts as the callData prefix.
-const EXECUTE_SELECTOR = selectorOf("execute(address,uint256,bytes)");
+const EXECUTE_SELECTOR = selectorOf("execute(address,address,uint256,bytes)");
 const EXECUTE_USER_OP_SELECTOR = selectorOf(
   "executeUserOp((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes),bytes32)"
 );
