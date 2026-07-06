@@ -9,7 +9,7 @@ import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/Pac
 
 /// @dev Only used to derive the accepted callData tag selectors by name+type (see EXECUTE_SELECTOR).
 interface IExecute {
-  function execute(address target, uint256 value, bytes calldata data) external;
+  function execute(address signer, address target, uint256 value, bytes calldata data) external;
 
   function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external;
 }
@@ -55,6 +55,7 @@ contract UnifiedForwarderAccount is AccessManaged {
     for (uint256 i = 0; i < signers.length; ++i) {
       require(signers[i] != address(0), ZeroAddress());
       authorizedSigner[signers[i]] = true;
+      emit AuthorizedSignerSet(signers[i], true);
     }
   }
 
